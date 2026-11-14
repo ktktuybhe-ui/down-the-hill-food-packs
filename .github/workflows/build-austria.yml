@@ -1,0 +1,85 @@
+name: Build Austria food packs
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the verified packs as a public GitHub Release
+        type: boolean
+        default: false
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: python -m pip install -r builder/requirements.txt
+      - name: Run unit tests on synthetic fixtures
+        run: python -m unittest discover -s tests -v
+      - name: Download authentic BLS source
+        run: python builder/fetch_sources.py --out sources
+      - name: Download official Open Food Facts bulk export
+        run: |
+          mkdir -p sources
+          curl --fail --location --show-error --retry 5 --retry-delay 20 \
+            --user-agent 'DownTheHill-TravelPack/0.2 (open food data re-use)' \
+            --output sources/openfoodfacts.tsv.gz \
+            'https://static.openfoodfacts.org/data/en.openfoodfacts.org.products.csv.gz'
+          gzip -t sources/openfoodfacts.tsv.gz
+      - name: Build both provenance-separated packs
+        run: |
+          cd builder
+          python build_pack.py \
+            --bls ../sources/BLS_4_0_2025_DE.zip \
+            --off ../sources/openfoodfacts.tsv.gz \
+            --max-off 3000 --version "1.${{ github.run_number }}" --out ../dist
+      - name: Verify complete source coverage and nutrition integrity
+        run: |
+          python builder/verify_release.py --folder dist --bls-min 6000 --off-min 3000
+          python builder/validate_pack.py dist/DownTheHill-Austria-offline-pack-v1.zip
+      - name: Prepare attribution and licensing
+        run: cp LICENSES_AND_SOURCES.md dist/ATTRIBUTION.md
+      - name: Add permanent public release URLs to the index
+        run: |
+          TAG="austria-$(date -u +%Y%m%d)-${GITHUB_RUN_NUMBER}"
+          echo "$TAG" > dist/release-tag.txt
+          python - "$TAG" <<'PYCODE'
+          import json,os,sys
+          from pathlib import Path
+          path=Path('dist/pack-index.json')
+          index=json.loads(path.read_text('utf-8'))
+          tag=sys.argv[1];repo=os.environ['GITHUB_REPOSITORY']
+          index['release_tag']=tag
+          for item in index['files']:
+              item['download_url']=f'https://github.com/{repo}/releases/download/{tag}/{item["file"]}'
+          path.write_text(json.dumps(index,ensure_ascii=False,indent=2),encoding='utf-8')
+          PYCODE
+      - name: Upload installable files as workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Austria-food-packs
+          path: |
+            dist/Austria-BLS-4.0.dthpack
+            dist/Austria-OpenFoodFacts.dthpack
+            dist/pack-index.json
+            dist/ATTRIBUTION.md
+          if-no-files-found: error
+          retention-days: 30
+      - name: Publish GitHub Release when checks pass
+        if: ${{ inputs.publish }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="$(cat dist/release-tag.txt)"
+          gh release create "$TAG" \
+            dist/Austria-BLS-4.0.dthpack \
+            dist/Austria-OpenFoodFacts.dthpack \
+            dist/pack-index.json \
+            dist/ATTRIBUTION.md \
+            --title "Austria Offline Food Packs $TAG" \
+            --notes 'Two separate, verified-source .dthpack files for Down the Hill Build 28+. Credit Max Rubner-Institut (BLS 4.0 CC BY 4.0) and Open Food Facts (ODbL 1.0). Verify nutrition and portions before logging meals.'
