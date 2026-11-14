@@ -45,6 +45,7 @@ jobs:
       - name: Prepare attribution and licensing
         run: cp LICENSES_AND_SOURCES.md dist/ATTRIBUTION.md
       - name: Add permanent public release URLs to the index
+        if: ${{ inputs.publish }}
         run: |
           TAG="austria-$(date -u +%Y%m%d)-${GITHUB_RUN_NUMBER}"
           echo "$TAG" > dist/release-tag.txt
