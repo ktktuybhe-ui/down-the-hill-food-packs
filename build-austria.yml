@@ -1,4 +1,4 @@
-name: Build verified Austria Food Packs
+name: .github/workflows/build-austria.yml
 on:
   workflow_dispatch:
 permissions:
