@@ -81,12 +81,24 @@ def build(src,dst,aliases,version,min_coverage):
                     lang='de' if de else 'en'
                     names[uid]=(lang,term); needed[lang].add(term)
             translations={k:translate_terms(v,k) if v else {} for k,v in needed.items()}
+            # Open Food Facts has 3,000 products with no name_en in this source
+            # snapshot, even when the product_name itself is written in English.
+            # Re-try names which the German model left untranslated using en->he.
+            # Never fill a failed translation with invented generic Hebrew words.
+            untranslated_de = needed['de'] - set(translations['de'])
+            english_fallback = translate_terms(untranslated_de, 'en') if untranslated_de else {}
+            print(f"Source {meta['source']}: German untranslated {len(untranslated_de)}, "
+                  f"English fallback translated {len(english_fallback)}", flush=True)
             added=0
+            fallback_applied=0
             for uid,de,en,he,search in rows:
                 choice=names.get(uid)
                 if not choice:continue
                 lang,term=choice
                 value=aliases.get(term.casefold()) if lang=='alias' else translations[lang].get(term)
+                if not value and lang=='de':
+                    value=english_fallback.get(term)
+                    if value:fallback_applied+=1
                 if not value:continue
                 conn.execute('UPDATE foods SET name_he=?,search_text=? WHERE id=?',
                              (value,search+' '+value,uid))
@@ -99,7 +111,13 @@ def build(src,dst,aliases,version,min_coverage):
             if conn.execute('SELECT count(*) FROM food_fts').fetchone()[0]!=count:raise ValueError('FTS count mismatch')
             covered=conn.execute("SELECT count(*) FROM foods WHERE name_he GLOB '*[א-ת]*'").fetchone()[0]
             coverage=covered/count
-            if coverage<min_coverage:raise ValueError(f'Hebrew coverage {coverage:.2%} below {min_coverage:.2%}')
+            if coverage<min_coverage:
+                untranslatable=conn.execute(
+                    "SELECT name_de,name_en,brand FROM foods WHERE name_he IS NULL OR name_he NOT GLOB '*[א-ת]*' LIMIT 60"
+                ).fetchall()
+                print(json.dumps({'source':meta['source'],'coverage':round(coverage,5),
+                                  'untranslated_sample':untranslatable},ensure_ascii=False),flush=True)
+                raise ValueError(f'Hebrew coverage {coverage:.2%} below {min_coverage:.2%}')
             samples=conn.execute("SELECT name_de,name_en,name_he FROM foods WHERE name_he GLOB '*[א-ת]*' ORDER BY id LIMIT 100").fetchall()
             conn.execute('VACUUM');conn.close();conn=None
             output_sql=file.read_bytes()
@@ -108,7 +126,8 @@ def build(src,dst,aliases,version,min_coverage):
             return {'file':Path(dst).name,'source':meta['source'],'source_file_sha256':hashlib.sha256(Path(src).read_bytes()).hexdigest(),
                     'output_file_sha256':hashlib.sha256(Path(dst).read_bytes()).hexdigest(),
                     'rows':count,'hebrew_names':covered,'coverage':round(coverage,5),'new_names':added,
-                    'models':MODELS,'model_license':'Apache-2.0','protected_rows_sha256':original,
+                    'models':MODELS,'model_license':'Apache-2.0','english_fallback_names':fallback_applied,
+                    'protected_rows_sha256':original,
                     'sample_first_100':samples}
         finally:
             if conn is not None:conn.close()
