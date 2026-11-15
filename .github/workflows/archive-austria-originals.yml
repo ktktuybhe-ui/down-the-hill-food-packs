@@ -1,0 +1,63 @@
+name: Archive Austria originals as recovery Release
+on:
+  push:
+    paths:
+      - '.github/workflows/archive-austria-originals.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  preserve:
+    name: Verify and publish original Austria food packs
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: \${{ github.token }}
+      GH_REPO: \${{ github.repository }}
+      TAG: austria-original-backup-2026-11-15
+    steps:
+      - name: Download original released files
+        run: |
+          mkdir -p archive
+          BASE="https://github.com/$GITHUB_REPOSITORY/releases/download/austria-1.3-attempt.1"
+          for file in Austria-BLS-4.0.dthpack Austria-OpenFoodFacts.dthpack pack-index.json ATTRIBUTION.md SHA256SUMS; do
+            curl --fail --location --retry 5 --retry-all-errors --show-error --output "archive/$file" "$BASE/$file"
+          done
+          (cd archive && sha256sum --check --strict SHA256SUMS)
+          test "$(sha256sum archive/Austria-BLS-4.0.dthpack | awk '{print $1}')" = a994590c54fc1424592e685380f011d4c7c3796e13e88f355011b4463538efcd
+          test "$(sha256sum archive/Austria-OpenFoodFacts.dthpack | awk '{print $1}')" = 176e804c6416dc2471c4e0216adccde28bd96a150b81bec96336c4a2d6756726
+      - name: Package independent recovery ZIP
+        run: |
+          cat > archive/RECOVERY_README.txt <<'EOF'
+          Down the Hill · Austria ORIGINAL food packs
+          Exact original source data, before extended Hebrew machine translation.
+          Includes 7,090 BLS 4.0 records (CC BY 4.0) and 3,000 Open Food Facts products (ODbL 1.0).
+          Both source databases remain separate for correct attribution and licensing.
+          Keep this ZIP and the SHA256SUMS file for offline recovery.
+          The current Hebrew translation candidate is separate and must pass QA.
+          Read ATTRIBUTION.md for licensing and source details.
+          EOF
+          (cd archive && sha256sum RECOVERY_README.txt > ADDITIONAL-SHA256SUMS)
+          (cd archive && zip -9 -q Austria-Original-Packs-Offline-Backup.zip Austria-BLS-4.0.dthpack Austria-OpenFoodFacts.dthpack pack-index.json ATTRIBUTION.md SHA256SUMS RECOVERY_README.txt ADDITIONAL-SHA256SUMS)
+          unzip -tq archive/Austria-Original-Packs-Offline-Backup.zip
+      - name: Publish if not already preserved; never overwrite
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo 'Backup Release already exists; refusing to alter preserved files.'
+            exit 0
+          fi
+          gh release create "$TAG" \
+            archive/Austria-Original-Packs-Offline-Backup.zip \
+            archive/Austria-BLS-4.0.dthpack archive/Austria-OpenFoodFacts.dthpack \
+            archive/pack-index.json archive/ATTRIBUTION.md \
+            archive/SHA256SUMS archive/ADDITIONAL-SHA256SUMS archive/RECOVERY_README.txt \
+            --target "$GITHUB_SHA" --title "Austria · original packs and offline recovery ZIP" \
+            --notes 'Verbatim copies from austria-1.3-attempt.1, verified with SHA256. Includes full ZIP. No data changed. BLS CC BY 4.0; Open Food Facts ODbL 1.0. Separate from Hebrew candidate.'
+      - name: Check all expected files published
+        run: |
+          gh release view "$TAG" --json assets --jq '.assets[].name' > /tmp/assets
+          for file in Austria-Original-Packs-Offline-Backup.zip Austria-BLS-4.0.dthpack Austria-OpenFoodFacts.dthpack pack-index.json ATTRIBUTION.md SHA256SUMS ADDITIONAL-SHA256SUMS RECOVERY_README.txt; do
+            grep -qx "$file" /tmp/assets || exit 1
+          done
