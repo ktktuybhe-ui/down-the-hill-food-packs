@@ -59,10 +59,26 @@ jobs:
           python -m pip install 'transformers>=4.44,<5' 'sentencepiece>=0.2' 'sacremoses>=0.1'
       - name: Translate only food names to Hebrew
         run: |
-          python -u builder/translate_austria_he.py --source-dir source-packs --out dist-he --aliases builder/austria_aliases.json --version "he-candidate-$GITHUB_RUN_NUMBER" --min-coverage .95
+          # Each provenance-separated dataset must retain >=90% Hebrew names.
+          # Candidate country-wide coverage is separately gated at >=95%.
+          # Product names can contain untranslated trade names in many local languages.
+          python -u builder/translate_austria_he.py --source-dir source-packs --out dist-he --aliases builder/austria_aliases.json --version "he-candidate-$GITHUB_RUN_NUMBER" --min-coverage .90
       - name: Validate source data, coverage, checksums and metadata
         run: |
           python builder/verify_release.py --folder dist-he --bls-min 7000 --off-min 3000
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          qa=json.loads(Path('dist-he/hebrew-translation-report.json').read_text())
+          rows=qa['summary']['records']
+          names=qa['summary']['hebrew_names']
+          ratio=names/rows
+          assert rows==10090, (rows,names)
+          assert ratio>=0.95, f'Austria overall coverage {ratio:.2%} < 95%'
+          for p in qa['packs']:
+              assert p['coverage']>=0.90, p
+          print(f'Austria candidate Hebrew coverage: {names}/{rows} = {ratio:.2%}; Open Food Facts may retain untranslated brand names')
+          PY
           cp source-packs/ATTRIBUTION.md dist-he/ATTRIBUTION.md
           python - <<'PY'
           import json,os,pathlib
@@ -78,6 +94,9 @@ jobs:
           Down the Hill - Austria Hebrew translation (candidate only)
           This release preserves the verified BLS and Open Food Facts numerical data.
           Names in Hebrew are machine-translated, not human reviewed.
+          Country-wide >=95% and each data source >=90% Hebrew name coverage was required.
+          Some Open Food Facts names remain in original languages because brand/proper nouns
+          must not be converted into invented or misleading Hebrew translations.
           Do not set it as the default production pack until linguistic spot-check QA.
           The original Austria source files remain in release austria-1.3-attempt.1.
           License: BLS CC BY 4.0; Open Food Facts ODbL 1.0; machine translation models Apache 2.0.
