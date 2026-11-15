@@ -1,0 +1,189 @@
+name: Publish verified optional food packs as standard app-compatible Releases
+on:
+  push:
+    paths:
+      - '.github/workflows/publish-standard-food-packs.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  austria:
+    name: Promote Austrian Hebrew to standard Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      SOURCE_TAG: austria-he-candidate-run4
+      TAG: austria-1.4
+      EXPECTED_BLS: eae5bf1449e800217936cc224018ae6dd81b795ed118d9bd98120bfee9a36e0b
+      EXPECTED_OFF: 8c16b8eef24e9c5a688e272bafbe608929a2603fc356f273f6a58c2732c0864b
+    steps:
+      - uses: actions/checkout@v4
+      - name: Preserve exact candidate binaries and audit source licenses
+        run: |
+          mkdir -p stage dist
+          gh release download "$SOURCE_TAG" --dir stage
+          echo "$EXPECTED_BLS  stage/Austria-BLS-4.0.dthpack" | sha256sum --check -
+          echo "$EXPECTED_OFF  stage/Austria-OpenFoodFacts.dthpack" | sha256sum --check -
+          (cd stage && sha256sum --check --strict SHA256SUMS)
+          cp stage/Austria-BLS-4.0.dthpack stage/Austria-OpenFoodFacts.dthpack dist/
+          cp stage/ATTRIBUTION.md stage/hebrew-translation-report.json dist/
+          cp stage/Austria-Original-Source-Backup.zip dist/
+          python builder/verify_release.py --folder dist --bls-min 7090 --off-min 3000
+          python - <<'PY'
+          import json, pathlib
+          qa=json.loads(pathlib.Path('dist/hebrew-translation-report.json').read_text())
+          assert qa['summary']['records']==10090
+          assert qa['summary']['hebrew_names']==9835
+          assert len(qa['packs'])==2
+          for p in qa['packs']:
+              assert p['coverage']>=.90
+              print('AT_SOURCE_COUNTS',p['source'],p['rows'],p['hebrew_names'],p['coverage'])
+          print('AT_TOTAL_COUNTS',qa['summary'])
+          index=pathlib.Path('dist/pack-index.json')
+          obj=json.loads(index.read_text())
+          assert obj['status']=='verified' and obj['region']=='AT'
+          obj['translation_review']='machine-translated-not-fully-linguistically-reviewed'
+          obj['candidate_source_release']='austria-he-candidate-run4'
+          obj['release_tag']='austria-1.4'
+          index.write_text(json.dumps(obj,ensure_ascii=False,indent=2)+'\n')
+          PY
+      - name: Package separate source provenance, warnings, checksum and backup ZIP
+        run: |
+          cat > dist/TRANSLATION_NOTICE_HE.txt <<'EOF'
+          Down the Hill Austria 1.4 · STANDARD optional download.
+          10,090 food records, 9,835 with Hebrew names (97.47%).
+          Structural/nutrition/FTS SHA256 validation passed.
+          Hebrew machine translations have NOT passed full human linguistic QA.
+          Some original-language product labels remain, and some Hebrew labels may be inaccurate.
+          When uncertain compare the original German/English names and food details.
+          Original BLS (CC BY 4.0) and Open Food Facts (ODbL 1.0) databases stay separate.
+          Full original source archive is also included.
+          EOF
+          (cd dist && sha256sum Austria-BLS-4.0.dthpack Austria-OpenFoodFacts.dthpack pack-index.json ATTRIBUTION.md hebrew-translation-report.json TRANSLATION_NOTICE_HE.txt Austria-Original-Source-Backup.zip > SHA256SUMS)
+          (cd dist && sha256sum --check --strict SHA256SUMS)
+          (cd dist && zip -q -9 Austria-1.4-Complete-Offline-Backup.zip Austria-BLS-4.0.dthpack Austria-OpenFoodFacts.dthpack pack-index.json ATTRIBUTION.md hebrew-translation-report.json TRANSLATION_NOTICE_HE.txt SHA256SUMS Austria-Original-Source-Backup.zip)
+          unzip -tq dist/Austria-1.4-Complete-Offline-Backup.zip
+      - name: Publish standard Austria Release and verify all app assets
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Refusing to overwrite existing $TAG"
+            exit 1
+          fi
+          gh release create "$TAG" \
+            dist/Austria-BLS-4.0.dthpack \
+            dist/Austria-OpenFoodFacts.dthpack \
+            dist/pack-index.json dist/SHA256SUMS \
+            dist/ATTRIBUTION.md dist/hebrew-translation-report.json \
+            dist/TRANSLATION_NOTICE_HE.txt \
+            dist/Austria-1.4-Complete-Offline-Backup.zip \
+            dist/Austria-Original-Source-Backup.zip \
+            --target "$GITHUB_SHA" \
+            --title "Austria 1.4 · Hebrew food packs, optional download" \
+            --notes "STANDARD OPTIONAL RELEASE for Build 31. Two verified source-separated .dthpack archives. 10,090 foods, 9,835 contain Hebrew labels. 97.47% name coverage does NOT imply translation accuracy. Hebrew machine translation has NOT undergone complete human review; check original names before use. Nutrient values, sources and SHA256 unchanged. Includes original/updated backups and licenses."
+          gh release view "$TAG" --json isPrerelease --jq '.isPrerelease' | grep -qx 'false'
+          gh release view "$TAG" --json assets --jq '.assets[].name' > /tmp/assets
+          for n in Austria-BLS-4.0.dthpack Austria-OpenFoodFacts.dthpack pack-index.json SHA256SUMS hebrew-translation-report.json Austria-1.4-Complete-Offline-Backup.zip Austria-Original-Source-Backup.zip; do
+            grep -qx "$n" /tmp/assets
+          done
+          mkdir -p verify
+          gh release download "$TAG" --pattern 'pack-index.json' --pattern 'SHA256SUMS' --dir verify
+          cmp verify/pack-index.json dist/pack-index.json
+          cmp verify/SHA256SUMS dist/SHA256SUMS
+
+  international:
+    name: Promote corrected USDA International Core to standard Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      SOURCE_TAG: international-core-he-fixes-2026-11-15
+      TAG: international-core-1.0
+      SOURCE_SHA: afc2f9b181157ac266a0e75248b1d9c0777275d7f68fec733691583d5b0ee852
+    steps:
+      - name: Download and verify immutable corrected source candidate
+        run: |
+          mkdir -p stage dist
+          gh release download "$SOURCE_TAG" --dir stage
+          echo "$SOURCE_SHA  stage/International-Core.dthpack" | sha256sum --check -
+          (cd stage && sha256sum --check --strict SHA256SUMS)
+          python - <<'PY'
+          import json,hashlib,sqlite3,struct,pathlib
+          raw=pathlib.Path('stage/International-Core.dthpack').read_bytes()
+          assert raw[:7]==b'DTHPK1\n'
+          n=struct.unpack('>I',raw[7:11])[0]
+          meta=json.loads(raw[11:11+n]);payload=raw[11+n:]
+          assert meta['packID']=='core.global' and meta['region']=='GLOBAL'
+          assert meta['count']==13535 and hashlib.sha256(payload).hexdigest()==meta['sha256']
+          db=sqlite3.connect(':memory:');db.deserialize(payload)
+          assert db.execute('PRAGMA integrity_check').fetchone()[0]=='ok'
+          assert db.execute('SELECT count(*) FROM foods').fetchone()[0]==13535
+          assert db.execute('SELECT count(*) FROM food_fts').fetchone()[0]==13535
+          he=db.execute("SELECT count(*) FROM foods WHERE name_he GLOB '*[א-ת]*'").fetchone()[0]
+          assert he==13365,he
+          db.close()
+          qa=json.loads(pathlib.Path('stage/hebrew-quality-review.json').read_text())
+          assert qa['source_rows']==13535 and qa['changed_rows']==258 and qa['hebrew_rows']==13365
+          assert qa['human_translation_review_completed'] is False
+          print('GLOBAL_TOTAL_COUNTS',13535,he,13535-he,qa['changed_rows'])
+          PY
+          cp stage/International-Core.dthpack stage/hebrew-quality-review.json stage/improve_core_he.py stage/ATTRIBUTION.md dist/
+          python - <<'PY'
+          import pathlib,hashlib,json
+          raw=pathlib.Path('dist/International-Core.dthpack').read_bytes()
+          index={'schema':1,'status':'verified','region':'GLOBAL',
+                 'translation_review':'machine-translated-not-fully-linguistically-reviewed',
+                 'release_tag':'international-core-1.0',
+                 'candidate_source_release':'international-core-he-fixes-2026-11-15',
+                 'files':[{'file':'International-Core.dthpack','bytes':len(raw),
+                           'sha256_file':hashlib.sha256(raw).hexdigest(),
+                           'packID':'core.global','source':'USDA-FoodDataCentral',
+                           'license':'CC0 1.0','records':13535}]}
+          pathlib.Path('dist/pack-index.json').write_text(json.dumps(index,ensure_ascii=False,indent=2)+'\n')
+          PY
+      - name: Package clear linguistic limitations and independent recovery ZIP
+        run: |
+          cat > dist/TRANSLATION_NOTICE_HE.txt <<'EOF'
+          Down the Hill International Core 1.0 · STANDARD optional download.
+          13,535 USDA food records, 13,365 with Hebrew name labels (98.74%).
+          Curated machine-label fixes on 258 rows, all listed in hebrew-quality-review.json.
+          SQLite/FTS SHA256 integrity verified; numeric USDA nutrient values unmodified.
+          Hebrew machine translations have NOT undergone full human linguistic review.
+          Some names may still be confusing. Always compare the source English item.
+          USDA FoodData Central CC0; Hebrew machine translation model Apache 2.0.
+          This optional pack can only be safely uninstalled through the improved app
+          version; Build 31 may not expose a Remove button for International Core.
+          EOF
+          (cd dist && sha256sum International-Core.dthpack pack-index.json ATTRIBUTION.md hebrew-quality-review.json improve_core_he.py TRANSLATION_NOTICE_HE.txt > SHA256SUMS)
+          (cd dist && sha256sum --check --strict SHA256SUMS)
+          (cd dist && zip -q -9 International-Core-1.0-Complete-Offline-Backup.zip International-Core.dthpack pack-index.json ATTRIBUTION.md hebrew-quality-review.json improve_core_he.py TRANSLATION_NOTICE_HE.txt SHA256SUMS)
+          unzip -tq dist/International-Core-1.0-Complete-Offline-Backup.zip
+      - name: Publish standard International Release with app-compatible checksums
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Refusing to overwrite existing $TAG"
+            exit 1
+          fi
+          gh release create "$TAG" \
+            dist/International-Core.dthpack dist/pack-index.json dist/SHA256SUMS \
+            dist/ATTRIBUTION.md dist/hebrew-quality-review.json dist/improve_core_he.py \
+            dist/TRANSLATION_NOTICE_HE.txt \
+            dist/International-Core-1.0-Complete-Offline-Backup.zip \
+            --target "$GITHUB_SHA" \
+            --title "International Core 1.0 · USDA, optional download" \
+            --notes "STANDARD OPTIONAL RELEASE for Build 31. 13,535 USDA foods, 13,365 Hebrew-containing labels (98.74% coverage); 258 rule-based corrections. Hebrew labels are MACHINE TRANSLATIONS and have NOT undergone full human linguistic review. Consult original English names when unclear. USDA nutrient data and provenance preserved, SHA256 verified. Build 31 may not let you REMOVE International Core until an app update. Includes full ZIP and quality report."
+          gh release view "$TAG" --json isPrerelease --jq '.isPrerelease' | grep -qx 'false'
+          gh release view "$TAG" --json assets --jq '.assets[].name' > /tmp/assets
+          for n in International-Core.dthpack pack-index.json SHA256SUMS hebrew-quality-review.json International-Core-1.0-Complete-Offline-Backup.zip; do
+            grep -qx "$n" /tmp/assets
+          done
+          mkdir -p verify
+          gh release download "$TAG" --pattern 'pack-index.json' --pattern 'SHA256SUMS' --dir verify
+          cmp verify/pack-index.json dist/pack-index.json
+          cmp verify/SHA256SUMS dist/SHA256SUMS
