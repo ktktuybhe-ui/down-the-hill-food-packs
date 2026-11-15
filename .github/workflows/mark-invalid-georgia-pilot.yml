@@ -1,0 +1,21 @@
+name: Mark invalid incomplete Georgia pilot archive
+on:
+  push:
+    paths:
+      - '.github/workflows/mark-invalid-georgia-pilot.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  mark:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clearly mark 64-row pilot as not a full Georgia food pack
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release edit georgia-he-candidate-2 \
+            --title 'INVALID PARTIAL Georgia source pilot · 64 foods ONLY' \
+            --notes 'INCOMPLETE, NOT APPROVED. The previous collector asked for page_size 500 but the provider returned only 100 products, incorrectly interpreted as the full country export. Only 64 valid nutritional products were retained, and just one name had Hebrew. DO NOT INSTALL OR PROMOTE. The corrected collection workflow verifies all source pages before approving an archival candidate.'
+          gh release view georgia-he-candidate-2 --json isPrerelease --jq '.isPrerelease' | grep -qx true
