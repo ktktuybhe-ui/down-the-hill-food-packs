@@ -30,7 +30,7 @@ jobs:
           python -m unittest discover -s tests -v
       - name: Retrieve all reported products for Georgia from Open Food Facts
         run: |
-          python -u builder/build_georgia_off.py --out dist-georgia --version "$TAG" --page-size 100 --max-pages 100 --pause 4
+          python -u builder/build_georgia_off.py --out dist-georgia --version "$TAG" --page-size 500 --max-pages 100 --pause 9
       - name: Verify data provenance, SQLite, nutrition and checksum
         run: |
           python - <<'PY'
