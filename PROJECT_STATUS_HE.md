@@ -37,6 +37,13 @@ Read the latest GitHub Actions and Releases for live status; do not infer iPhone
 - [USDA artifact preserve workflow](https://github.com/ktktuybhe-ui/down-the-hill-food-packs/blob/main/.github/workflows/archive-international-core.yml).
 - [Austrian Hebrew Action (run 43750853015)](https://github.com/ktktuybhe-ui/down-the-hill-food-packs/actions/runs/43750853015).
 
+
+### Austria Hebrew retry, 15 Nov 2026
+- Initial attempt [43750853015](https://github.com/ktktuybhe-ui/down-the-hill-food-packs/actions/runs/43750853015) failed because **Open Food Facts achieved 88.37% Hebrew name coverage**, versus the 95% gate. The BLS translation phase completed.
+- Root cause confirmed from authentic source package: 3,000 Open Food Facts items have an empty `name_en` field, but many `name_de` product names are English or brand names. First run tried German→Hebrew for all.
+- Fixed [builder/translate_austria_he.py](https://github.com/ktktuybhe-ui/down-the-hill-food-packs/blob/main/builder/translate_austria_he.py) to retry terms missing Hebrew with English→Hebrew while keeping original German/English fields, nutrition, provenance and serving sizes intact. Added sample reporting for uncovered names and automatic workflow trigger on code changes.
+- New retry: [GitHub Action 43753904629](https://github.com/ktktuybhe-ui/down-the-hill-food-packs/actions/runs/43753904629). **In progress when written; do not claim success yet**. Its candidate Release must contain two separate packs, checksums, QA report and the original/translated ZIPs. Do not uninstall the current packs.
+
 ## iPhone / Build 31
 - Do not delete the installed app.
 - The app's existing Israeli and small common-food catalogs remain built-in.
