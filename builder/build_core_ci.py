@@ -49,7 +49,9 @@ def num(value):
 
 def nutrients(food):
     values = {}
-    for item in food.get("foodNutrients", []):
+    for item in food.get("foodNutrients") or []:
+        if not isinstance(item, dict):
+            continue
         nutrient = item.get("nutrient") or {}
         raw = nutrient.get("id") or item.get("nutrientId")
         if raw is None:
@@ -102,6 +104,8 @@ def main():
         foods = load_foods(archive, collection)
         count = 0
         for food in foods:
+            if not isinstance(food, dict):
+                continue  # Official Foundation JSON can contain null entries.
             code = food.get("fdcId") or food.get("fdc_id")
             desc = food.get("description")
             if code is None or not isinstance(desc, str) or not desc.strip():
