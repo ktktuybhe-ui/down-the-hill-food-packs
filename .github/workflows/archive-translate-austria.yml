@@ -3,6 +3,8 @@ on:
   push:
     paths:
       - '.github/workflows/archive-translate-austria.yml'
+      - 'builder/translate_austria_he.py'
+      - 'builder/austria_aliases.json'
   workflow_dispatch:
 permissions:
   contents: read
