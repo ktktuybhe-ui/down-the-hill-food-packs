@@ -1,0 +1,86 @@
+name: Build International Core (USDA + Hebrew)
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/build-international-core.yml'
+      - 'builder/build_core_ci.py'
+      - 'tests/test_core_ci.py'
+permissions:
+  contents: read
+jobs:
+  core:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install test dependencies
+        run: python -m pip install -r builder/requirements.txt
+      - name: Run validation tests
+        run: python -m unittest discover -s tests -v
+      - name: Download official USDA data
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p sources
+          curl --fail --location --show-error --retry 5 --retry-delay 10 --connect-timeout 30 -o sources/sr.zip https://fdc.nal.usda.gov/fdc-datasets/FoodData_Central_sr_legacy_food_json_2018-04.zip
+          curl --fail --location --show-error --retry 5 --retry-delay 10 --connect-timeout 30 -o sources/fndds.zip https://fdc.nal.usda.gov/fdc-datasets/FoodData_Central_survey_food_json_2024-10-31.zip
+          curl --fail --location --show-error --retry 5 --retry-delay 10 --connect-timeout 30 -o sources/foundation.zip https://fdc.nal.usda.gov/fdc-datasets/FoodData_Central_foundation_food_json_2026-04-30.zip
+          python - <<'PY'
+          import zipfile
+          from pathlib import Path
+          for p in Path('sources').glob('*.zip'):
+              assert zipfile.is_zipfile(p), p
+              with zipfile.ZipFile(p) as z:
+                  assert z.testzip() is None, p
+              print(p, p.stat().st_size)
+          PY
+      - name: Install translation runtime
+        run: python -m pip install 'transformers>=4.42,<5' 'torch>=2.2,<3' 'sentencepiece>=0.2,<1' 'sacremoses>=0.1,<1'
+      - name: Create USDA core with machine Hebrew search names
+        env:
+          TOKENIZERS_PARALLELISM: 'false'
+          HF_HUB_DISABLE_TELEMETRY: '1'
+        run: |
+          python -u builder/build_core_ci.py --sr sources/sr.zip --foundation sources/foundation.zip --fndds sources/fndds.zip --version core-usda-2026.1 --out dist
+      - name: Validate .dthpack and checksum
+        run: |
+          python - <<'PY'
+          import hashlib, json, sqlite3, struct
+          from pathlib import Path
+          raw=Path('dist/International-Core.dthpack').read_bytes()
+          assert raw[:7]==b'DTHPK1\n'
+          length=struct.unpack('>I',raw[7:11])[0]
+          assert 0<length<8192
+          meta=json.loads(raw[11:11+length]); payload=raw[11+length:]
+          assert meta['packID']=='core.global' and meta['schema']==1
+          assert hashlib.sha256(payload).hexdigest()==meta['sha256']
+          db=sqlite3.connect(':memory:'); db.deserialize(payload)
+          assert db.execute('PRAGMA integrity_check').fetchone()[0]=='ok'
+          count=db.execute('SELECT COUNT(*) FROM foods').fetchone()[0]
+          hebrew=db.execute("SELECT COUNT(*) FROM foods WHERE name_he IS NOT NULL AND name_he <> ''").fetchone()[0]
+          assert count==meta['count'] and count>=10000 and hebrew/count>=.95, (count,hebrew)
+          assert db.execute('SELECT COUNT(*) FROM food_fts').fetchone()[0]==count
+          manifest=json.loads(Path('dist/pack-index.json').read_text())
+          assert manifest['files'][0]['sha256_file']==hashlib.sha256(raw).hexdigest()
+          assert manifest['status']=='candidate-for-human-translation-review'
+          print(f'QA PASSED: {count} foods, {hebrew} Hebrew names, {len(raw)} bytes')
+          PY
+          (cd dist && sha256sum --check --strict SHA256SUMS)
+      - name: Upload candidate for review (not public release)
+        uses: actions/upload-artifact@v4
+        with:
+          name: international-core-usda-hebrew-candidate
+          path: |
+            dist/International-Core.dthpack
+            dist/pack-index.json
+            dist/SHA256SUMS
+            dist/translation-report.json
+          if-no-files-found: error
+          retention-days: 7
