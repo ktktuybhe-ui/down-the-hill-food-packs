@@ -1,15 +1,11 @@
 name: Georgia food pack candidate · source QA and independent backup
 on:
-  push:
-    paths:
-      - 'builder/build_georgia_off.py'
-      - '.github/workflows/georgia-candidate-food-pack.yml'
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
   build_and_archive:
-    name: Gather authentic Georgian-market products and validate candidate
+    name: Legacy single-run collection (manual only; superseded by sharded collector)
     runs-on: ubuntu-latest
     timeout-minutes: 120
     permissions:
