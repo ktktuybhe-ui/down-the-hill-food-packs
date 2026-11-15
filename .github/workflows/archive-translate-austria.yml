@@ -1,0 +1,118 @@
+name: Backup and Hebrew-translate Austria (source preserving)
+on:
+  push:
+    paths:
+      - '.github/workflows/archive-translate-austria.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    name: Preserve authentic Austria source packs
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Download all original release assets, preserving exact bytes
+        run: |
+          mkdir -p source-packs
+          BASE='https://github.com/ktktuybhe-ui/down-the-hill-food-packs/releases/download/austria-1.3-attempt.1'
+          for file in Austria-BLS-4.0.dthpack Austria-OpenFoodFacts.dthpack ATTRIBUTION.md pack-index.json SHA256SUMS; do
+            curl --fail --location --show-error --retry 5 --retry-all-errors --output "source-packs/$file" "$BASE/$file"
+          done
+          (cd source-packs && sha256sum --check --strict SHA256SUMS)
+          test "$(sha256sum source-packs/Austria-BLS-4.0.dthpack | cut -d' ' -f1)" = a994590c54fc1424592e685380f011d4c7c3796e13e88f355011b4463538efcd
+          test "$(sha256sum source-packs/Austria-OpenFoodFacts.dthpack | cut -d' ' -f1)" = 176e804c6416dc2471c4e0216adccde28bd96a150b81bec96336c4a2d6756726
+          (cd source-packs && zip -q -9 Austria-Original-Source-Backup.zip Austria-BLS-4.0.dthpack Austria-OpenFoodFacts.dthpack ATTRIBUTION.md pack-index.json SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: austria-original-source-backup
+          path: source-packs/
+          if-no-files-found: error
+          retention-days: 90
+  translate:
+    name: Translate names and validate nutrition invariants
+    needs: snapshot
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/download-artifact@v4
+        with:
+          name: austria-original-source-backup
+          path: source-packs
+      - name: Run existing fixture tests
+        run: |
+          python -m unittest discover -s tests -v
+          python -m py_compile builder/translate_austria_he.py
+          (cd source-packs && sha256sum --check --strict SHA256SUMS)
+      - name: Install CPU-only model dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu 'torch>=2.3,<3'
+          python -m pip install 'transformers>=4.44,<5' 'sentencepiece>=0.2' 'sacremoses>=0.1'
+      - name: Translate only food names to Hebrew
+        run: |
+          python -u builder/translate_austria_he.py --source-dir source-packs --out dist-he --aliases builder/austria_aliases.json --version "he-candidate-$GITHUB_RUN_NUMBER" --min-coverage .95
+      - name: Validate source data, coverage, checksums and metadata
+        run: |
+          python builder/verify_release.py --folder dist-he --bls-min 7000 --off-min 3000
+          cp source-packs/ATTRIBUTION.md dist-he/ATTRIBUTION.md
+          python - <<'PY'
+          import json,os,pathlib
+          root=pathlib.Path('dist-he')
+          index=root/'pack-index.json'
+          obj=json.loads(index.read_text())
+          obj['status']='candidate-pending-human-Hebrew-translation-QA'
+          obj['translation_review']='not-yet-human-verified'
+          obj['release_tag']='austria-he-candidate-run'+os.environ['GITHUB_RUN_NUMBER']
+          index.write_text(json.dumps(obj,ensure_ascii=False,indent=2)+'\n')
+          PY
+          cat > dist-he/QA_PENDING_HE.txt <<'EOF'
+          Down the Hill - Austria Hebrew translation (candidate only)
+          This release preserves the verified BLS and Open Food Facts numerical data.
+          Names in Hebrew are machine-translated, not human reviewed.
+          Do not set it as the default production pack until linguistic spot-check QA.
+          The original Austria source files remain in release austria-1.3-attempt.1.
+          License: BLS CC BY 4.0; Open Food Facts ODbL 1.0; machine translation models Apache 2.0.
+          EOF
+          (cd dist-he && sha256sum Austria-BLS-4.0.dthpack Austria-OpenFoodFacts.dthpack pack-index.json ATTRIBUTION.md hebrew-translation-report.json QA_PENDING_HE.txt > SHA256SUMS)
+          (cd dist-he && sha256sum --check --strict SHA256SUMS)
+          (cd dist-he && zip -q -9 Austria-Hebrew-Candidate-Backup.zip Austria-BLS-4.0.dthpack Austria-OpenFoodFacts.dthpack pack-index.json ATTRIBUTION.md hebrew-translation-report.json QA_PENDING_HE.txt SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: austria-hebrew-candidate-backup
+          path: dist-he/
+          if-no-files-found: error
+          retention-days: 90
+  publish_candidate:
+    name: Save durable PRERELEASE backup (not production)
+    needs: translate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: austria-hebrew-candidate-backup
+          path: release
+      - uses: actions/download-artifact@v4
+        with:
+          name: austria-original-source-backup
+          path: original
+      - name: Preserve both originals and translated candidates in permanent GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          (cd release && sha256sum --check --strict SHA256SUMS)
+          (cd original && sha256sum --check --strict SHA256SUMS)
+          TAG="austria-he-candidate-run$GITHUB_RUN_NUMBER"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo 'Release tag already exists. Refusing to overwrite preserved archive.'
+            exit 1
+          fi
+          gh release create "$TAG" release/Austria-BLS-4.0.dthpack release/Austria-OpenFoodFacts.dthpack release/pack-index.json release/ATTRIBUTION.md release/hebrew-translation-report.json release/QA_PENDING_HE.txt release/SHA256SUMS release/Austria-Hebrew-Candidate-Backup.zip original/Austria-Original-Source-Backup.zip --target "$GITHUB_SHA" --prerelease --title "Austria Hebrew candidate $TAG (QA pending)" --notes 'Machine-translated Hebrew labels; NOT yet human-verified. Nutritional fields, IDs, provenance and unit values are preserved and checked. Original source packs included as backup. BLS CC BY 4.0, Open Food Facts ODbL 1.0, translation models Apache-2.0.'
