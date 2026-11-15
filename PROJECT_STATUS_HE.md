@@ -8,10 +8,18 @@ Read the latest GitHub Actions and Releases for live status; do not infer iPhone
 
 | Pack | Verified food records | Hebrew labels | Durable downloadable GitHub Release | QA |
 |---|---:|---:|---|---|
-| Austria BLS 4.0 (German source) | 7,090 | Limited curated aliases in original | [austria-1.3-attempt.1](https://github.com/ktktuybhe-ui/down-the-hill-food-packs/releases/tag/austria-1.3-attempt.1) | Released |
-| Austria Open Food Facts | 3,000 | Limited curated aliases in original | Same Release, separate ODbL file | Released |
+| Austria BLS 4.0 (German source) | 7,090 | Limited curated aliases in original | [Original pack + full backup ZIP](https://github.com/ktktuybhe-ui/down-the-hill-food-packs/releases/tag/austria-original-backup-2026-11-15) | Verified and permanently archived |
+| Austria Open Food Facts | 3,000 | Limited curated aliases in original | [Same original backup Release](https://github.com/ktktuybhe-ui/down-the-hill-food-packs/releases/tag/austria-original-backup-2026-11-15) | Verified and permanently archived |
 | USDA International Core | 13,535 | 13,418 machine-translated | [international-core-candidate-2026-11-15](https://github.com/ktktuybhe-ui/down-the-hill-food-packs/releases/tag/international-core-candidate-2026-11-15) | Structural QA passed; Hebrew linguistic QA pending |
 | Austria Hebrew candidate | Target: preserve all 10,090 | Target: >=95% per source | [Check Austrian Hebrew Action](https://github.com/ktktuybhe-ui/down-the-hill-food-packs/actions/runs/43750853015) | In progress when this file was written; see live action |
+
+
+### Durable Recovery Releases — verified on 15 Nov 2026
+- [Austria original 10,090 foods — source files + offline backup ZIP + checksums](https://github.com/ktktuybhe-ui/down-the-hill-food-packs/releases/tag/austria-original-backup-2026-11-15); [successful publishing Action](https://github.com/ktktuybhe-ui/down-the-hill-food-packs/actions/runs/43751987510).
+- [USDA International Core — 13,535 foods + offline backup ZIP + translation report](https://github.com/ktktuybhe-ui/down-the-hill-food-packs/releases/tag/international-core-candidate-2026-11-15); pending human translation review.
+- [Food pack builder code + QA tests + workflows + recovery documentation ZIP](https://github.com/ktktuybhe-ui/down-the-hill-food-packs/releases/tag/food-pack-builder-backup-2026-11-15); [successful archive Action](https://github.com/ktktuybhe-ui/down-the-hill-food-packs/actions/runs/43752109079).
+- [Austria extended Hebrew candidate Action](https://github.com/ktktuybhe-ui/down-the-hill-food-packs/actions/runs/43750853015): **not yet a verified Release** as of this update. If successful its workflow publishes a new prerelease with original and translated backup ZIPs. Do not uninstall installed Austria food packs before a tested upgrade.
+- The **iOS Build 31 Xcode source ZIP is not included in these GitHub Releases**. It was provided in the conversation and must remain backed up separately on the user's computer unless deliberately uploaded to a code repository/Release.
 
 ### Reproducibility
 - Original Austria source binaries SHA256 (Release 1.3):
