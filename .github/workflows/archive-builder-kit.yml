@@ -1,0 +1,51 @@
+name: Release complete food-pack builder source archive
+on:
+  push:
+    paths:
+      - '.github/workflows/archive-builder-kit.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: food-pack-builder-backup-2026-11-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build self-contained builder backup and checksums
+        run: |
+          mkdir -p backup
+          cp -R builder tests .github workflows backup/ 2>/dev/null || :
+          for file in README_HE.md PROJECT_STATUS_HE.md LICENSES_AND_SOURCES.md build-austria.yml; do
+            test ! -f "$file" || cp "$file" backup/
+          done
+          cat > backup/RECOVERY_README.txt <<'EOF'
+          Source snapshot of Down the Hill food-pack generators, tests,
+          translation tools, workflows, documentation and provenance.
+          THIS IS NOT the iPhone app's Build 31 Xcode project.
+          The original and translated nutrition packages are preserved in
+          separate downloadable GitHub Releases in the same repository.
+          EOF
+          (cd backup && find . -type f -print0 | sort -z | xargs -0 sha256sum > ../BUILDER-SHA256SUMS)
+          (cd backup && zip -q -r -9 ../DTH-Food-Pack-Builder-Source-Backup.zip .)
+          unzip -tq DTH-Food-Pack-Builder-Source-Backup.zip
+      - name: Publish all snapshot files as a non-overwriting Release
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo 'Source backup Release already exists; no overwrite.'
+            exit 0
+          fi
+          gh release create "$TAG" DTH-Food-Pack-Builder-Source-Backup.zip BUILDER-SHA256SUMS \
+            --title 'Down the Hill · food-pack builder code and recovery backup' --target "$GITHUB_SHA" \
+            --notes 'Reproducible snapshot of the food-pack builders, Hebrew translation code, CI workflows, source attribution, QA tests and status/recovery instructions. This is NOT the Build 31 iOS Xcode source project; food data archives are available in their own Releases.'
+      - name: Verify published source backup assets
+        run: |
+          gh release view "$TAG" --json assets --jq '.assets[].name' > /tmp/sources
+          grep -qx DTH-Food-Pack-Builder-Source-Backup.zip /tmp/sources
+          grep -qx BUILDER-SHA256SUMS /tmp/sources
