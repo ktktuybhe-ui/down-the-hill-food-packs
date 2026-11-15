@@ -14,8 +14,8 @@ jobs:
     permissions:
       contents: write
     env:
-      GH_TOKEN: \${{ github.token }}
-      GH_REPO: \${{ github.repository }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
       TAG: austria-original-backup-2026-11-15
     steps:
       - name: Download original released files
