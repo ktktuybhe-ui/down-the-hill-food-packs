@@ -70,19 +70,55 @@ def row(p):
 def make(args):
     out=Path(args.out);out.mkdir(parents=True,exist_ok=True)
     records=[];seen=set();api_count=None;fetched=0;complete=False
-    for page in range(1,args.max_pages+1):
-        response=fetch(page,args.page_size,args.user_agent)
-        if api_count is None:api_count=int(response.get("count") or 0)
-        batch=response.get("products",[]);fetched+=len(batch)
-        print("Georgia products page",page,"fetched",fetched,"of",api_count,flush=True)
-        for p in batch:
-            rec=row(p)
-            if rec and rec["id"] not in seen:
-                records.append(rec);seen.add(rec["id"])
-        if len(batch)<args.page_size or (api_count>0 and fetched>=api_count):
-            complete=True;break
-        time.sleep(args.pause)
-    if not complete:raise RuntimeError("Incomplete Georgia country export: raise max-pages; no partial pack promoted.")
+    if args.pages_dir:
+        pages_dir=Path(args.pages_dir)
+        files=sorted(pages_dir.glob("page-*.json"))
+        if not files:raise RuntimeError("No downloaded source pages")
+        page_map={}
+        for filename in files:
+            page=int(filename.stem.split("-")[-1])
+            if page in page_map:raise RuntimeError("Duplicate source page "+str(page))
+            page_map[page]=json.loads(filename.read_text(encoding="utf-8"))
+        api_count=int(page_map.get(1,{}).get("count") or 0)
+        if api_count<=0:raise RuntimeError("Source reported zero products")
+        # The provider can cap requests at 100 even when 500 is requested.
+        # Never mistake a provider cap for the end of the country export.
+        reported_size=int(page_map[1].get("page_size") or 100)
+        if reported_size<=0 or reported_size>1000:raise RuntimeError("Invalid provider page size")
+        first_batch=len(page_map[1].get("products",[]))
+        effective_size=min(reported_size,first_batch)
+        if effective_size<=0:raise RuntimeError("Invalid empty first page")
+        expected_pages=(api_count+effective_size-1)//effective_size
+        missing=[i for i in range(1,expected_pages+1) if i not in page_map]
+        if missing:raise RuntimeError("Missing pages for complete source: "+str(missing))
+        for page in range(1,expected_pages+1):
+            response=page_map[page]
+            if int(response.get("page") or page)!=page:
+                raise RuntimeError("Wrong page metadata")
+            batch=response.get("products",[])
+            if page<expected_pages and len(batch)!=effective_size:
+                raise RuntimeError("Unexpected incomplete source page "+str(page))
+            fetched+=len(batch)
+            print("Archived Georgia page",page,"rows",len(batch),flush=True)
+            for p in batch:
+                rec=row(p)
+                if rec and rec["id"] not in seen:
+                    records.append(rec);seen.add(rec["id"])
+        complete=fetched>=api_count
+    else:
+        for page in range(1,args.max_pages+1):
+            response=fetch(page,args.page_size,args.user_agent)
+            if api_count is None:api_count=int(response.get("count") or 0)
+            batch=response.get("products",[]);fetched+=len(batch)
+            print("Georgia products page",page,"fetched",fetched,"of",api_count,flush=True)
+            for p in batch:
+                rec=row(p)
+                if rec and rec["id"] not in seen:
+                    records.append(rec);seen.add(rec["id"])
+            if api_count>0 and fetched>=api_count:complete=True;break
+            if not batch:break
+            time.sleep(args.pause)
+    if not complete:raise RuntimeError("Incomplete Georgia country export: missing pages or API throttling; no partial pack promoted.")
     records.sort(key=lambda r:r["id"])
     db=out/"georgia.sqlite"
     count=insert_records(db,records)
@@ -132,6 +168,7 @@ def make(args):
 def main():
     a=argparse.ArgumentParser()
     a.add_argument("--out",default="dist-georgia")
+    a.add_argument("--pages-dir",default=None,help="Fully audited source page snapshots, required for sharded collector")
     a.add_argument("--version",default="georgia-he-candidate")
     a.add_argument("--page-size",type=int,default=100)
     a.add_argument("--max-pages",type=int,default=100)
