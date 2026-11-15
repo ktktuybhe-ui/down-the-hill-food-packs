@@ -1,0 +1,112 @@
+name: Preserve corrected International Core Hebrew candidate in Releases
+on:
+  push:
+    paths:
+      - '.github/workflows/publish-corrected-international-core.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  quality_and_release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: international-core-he-fixes-2026-11-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Download exact archived authentic USDA candidate
+        run: |
+          mkdir -p source dist
+          curl --fail --location --retry 5 --retry-all-errors --show-error \
+            -o source/International-Core.dthpack \
+            'https://github.com/ktktuybhe-ui/down-the-hill-food-packs/releases/download/international-core-candidate-2026-11-15/International-Core.dthpack'
+          echo 'f740753c26dd6f977bce7aaad16f0d3ce5f09a337a83752de4b4e2ce39abeed9  source/International-Core.dthpack' | sha256sum -c -
+      - name: Audit machine names and apply safe curated corrections
+        run: |
+          python builder/improve_core_he.py --input source/International-Core.dthpack --out dist
+          python - <<'PY'
+          import hashlib,json,sqlite3,struct
+          from pathlib import Path
+          p=Path('dist/International-Core.dthpack')
+          data=p.read_bytes()
+          assert data[:7]==b'DTHPK1\n'
+          n=struct.unpack('>I',data[7:11])[0];meta=json.loads(data[11:11+n])
+          payload=data[11+n:]
+          assert meta['packID']=='core.global' and meta['count']==13535
+          assert hashlib.sha256(payload).hexdigest()==meta['sha256']
+          db=sqlite3.connect(':memory:');db.deserialize(payload)
+          assert db.execute('PRAGMA integrity_check').fetchone()[0]=='ok'
+          assert db.execute('SELECT count(*) FROM foods').fetchone()[0]==13535
+          assert db.execute('SELECT count(*) FROM food_fts').fetchone()[0]==13535
+          db.close()
+          qa=json.loads(Path('dist/hebrew-quality-review.json').read_text())
+          assert qa['source_rows']==13535 and qa['changed_rows']>=200
+          assert qa['coverage']>=.98
+          assert qa['human_translation_review_completed'] is False
+          print('AUDIT PASSED:',qa['changed_rows'],'curated corrections;',qa['hebrew_rows'],'Hebrew names')
+          PY
+      - name: Prepare download manifest, full backup, license and checksums
+        run: |
+          cp builder/improve_core_he.py dist/improve_core_he.py
+          cat > dist/ATTRIBUTION.md <<'EOF'
+          USDA FoodData Central, CC0 1.0 Public Domain, https://fdc.nal.usda.gov/
+          Hebrew labels translated with Helsinki-NLP/opus-mt-en-he, Apache 2.0.
+          Curated rule corrections verified mechanically against original USDA English labels.
+          Translation quality still requires broad human sampling; preserve source names in English.
+          The original 13,535 USDA entries and full original candidate are preserved separately:
+          https://github.com/ktktuybhe-ui/down-the-hill-food-packs/releases/tag/international-core-candidate-2026-11-15
+          EOF
+          cat > dist/QA_PENDING_HE.txt <<'EOF'
+          Conservative Hebrew fixes on a previously archived USDA 13,535-row source.
+          The 258-ish corrected records are logged individually in hebrew-quality-review.json.
+          No numeric nutrition data, units, source IDs or source provenance are changed.
+          All transformations are testable with improve_core_he.py included in this backup.
+          Machine translation still contains other errors; linguistic QA is NOT complete.
+          This is a separate candidate, not yet an official app-ready production Release.
+          EOF
+          python - <<'PY'
+          import json,os
+          from pathlib import Path
+          p=Path('dist/pack-index.json');x=json.loads(p.read_text())
+          x['release_tag']=os.environ['TAG']
+          x['translation_review']='human-QA-pending'
+          for item in x['files']:
+              item['download_url']=f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/releases/download/{os.environ['TAG']}/{item['file']}"
+          p.write_text(json.dumps(x,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          PY
+          (cd dist && sha256sum International-Core.dthpack pack-index.json hebrew-quality-review.json improve_core_he.py ATTRIBUTION.md QA_PENDING_HE.txt > SHA256SUMS)
+          (cd dist && sha256sum --check --strict SHA256SUMS)
+          (cd dist && zip -q -9 International-Core-Hebrew-Fixes-Offline-Backup.zip International-Core.dthpack pack-index.json hebrew-quality-review.json improve_core_he.py ATTRIBUTION.md QA_PENDING_HE.txt SHA256SUMS)
+          unzip -tq dist/International-Core-Hebrew-Fixes-Offline-Backup.zip
+      - name: Publish durable non-overwriting candidate
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo 'Target exists. Preserve it without overwriting any assets.'
+            exit 1
+          fi
+          gh release create "$TAG" \
+            dist/International-Core.dthpack dist/pack-index.json \
+            dist/hebrew-quality-review.json dist/improve_core_he.py \
+            dist/ATTRIBUTION.md dist/QA_PENDING_HE.txt dist/SHA256SUMS \
+            dist/International-Core-Hebrew-Fixes-Offline-Backup.zip \
+            --prerelease --target "$GITHUB_SHA" \
+            --title 'International Core USDA · corrected Hebrew candidate (QA pending)' \
+            --notes '13,535 USDA rows, original nutrition and provenance preserved. Machine-label corrections documented in included QA report. Human review of all Hebrew names is NOT complete; do not install as production by default. Full offline ZIP and SHA256 included.'
+      - name: Verify published assets and actual download SHA256
+        run: |
+          gh release view "$TAG" --json assets --jq '.assets[].name' > /tmp/release-assets
+          for file in International-Core.dthpack pack-index.json hebrew-quality-review.json improve_core_he.py ATTRIBUTION.md QA_PENDING_HE.txt SHA256SUMS International-Core-Hebrew-Fixes-Offline-Backup.zip; do
+            grep -qx "$file" /tmp/release-assets
+          done
+          mkdir -p verify-download
+          curl --fail --location --retry 5 --retry-all-errors --show-error \
+            -o verify-download/International-Core.dthpack \
+            "https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/International-Core.dthpack"
+          cmp dist/International-Core.dthpack verify-download/International-Core.dthpack
