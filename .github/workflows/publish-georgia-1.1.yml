@@ -1,0 +1,115 @@
+name: Build and publish Georgia 1.1 traditional meals and salads
+on:
+  pull_request:
+    paths:
+      - 'builder/build_georgia_1_1.py'
+      - 'builder/georgia_1_1_recipes.json'
+      - '.github/workflows/publish-georgia-1.1.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'builder/build_georgia_1_1.py'
+      - 'builder/georgia_1_1_recipes.json'
+      - '.github/workflows/publish-georgia-1.1.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build_verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Fetch existing authentic Georgia 1.0 release without changing it
+        run: |
+          set -euo pipefail
+          mkdir -p original
+          gh release view georgia-1.0 --repo "$GH_REPO" --json isPrerelease --jq '.isPrerelease' | grep -qx false
+          gh release download georgia-1.0 --repo "$GH_REPO" \
+            --pattern Georgia-OpenFoodFacts.dthpack --pattern pack-index.json \
+            --dir original
+          python - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          info=json.loads(Path("original/pack-index.json").read_text())
+          assert info["schema"]==1 and info["region"]=="GE" and info["status"]=="verified"
+          assert info["release_tag"]=="georgia-1.0"
+          assert len(info["files"])==1 and info["files"][0]["packID"]=="travel.ge"
+          p=Path("original")/info["files"][0]["file"]
+          assert p.name=="Georgia-OpenFoodFacts.dthpack"
+          assert hashlib.sha256(p.read_bytes()).hexdigest()==info["files"][0]["sha256_file"]
+          print("ORIGINAL_GEORGIA_1_0_SHA_VERIFIED",len(p.read_bytes()))
+          PY
+      - name: Build updated Georgia 1.1 pack and verify source-row preservation
+        run: |
+          set -euo pipefail
+          python -m py_compile builder/build_georgia_1_1.py
+          python builder/build_georgia_1_1.py \
+            --base-pack original/Georgia-OpenFoodFacts.dthpack \
+            --recipes builder/georgia_1_1_recipes.json --out dist
+          (cd dist && sha256sum --check --strict SHA256SUMS)
+          unzip -tq dist/Georgia-1.1-Offline-Backup.zip
+          python - <<'PY'
+          import json,hashlib,sqlite3,struct
+          from pathlib import Path
+          root=Path("dist")
+          qa=json.loads((root/"qa-report.json").read_text())
+          index=json.loads((root/"pack-index.json").read_text())
+          assert qa["original_source_rows"]>=500 and qa["original_1_0_products_unchanged"]
+          assert qa["new_recipe_estimates"]>=30 and qa["salads_added"]>=10
+          assert index["region"]=="GE" and index["release_tag"]=="georgia-1.1"
+          item=index["files"][0]
+          assert item["packID"]=="travel.ge" and item["version"]=="1.1"
+          blob=(root/item["file"]).read_bytes()
+          assert hashlib.sha256(blob).hexdigest()==item["sha256_file"]
+          assert blob[:7]==b"DTHPK1\n"
+          size=struct.unpack(">I",blob[7:11])[0]
+          meta=json.loads(blob[11:11+size]);data=blob[11+size:]
+          assert meta["version"]=="1.1" and meta["count"]==qa["total"]
+          assert hashlib.sha256(data).hexdigest()==meta["sha256"]
+          db=sqlite3.connect(":memory:");db.deserialize(data)
+          assert db.execute("PRAGMA integrity_check").fetchone()[0]=="ok"
+          assert db.execute("SELECT count(*) FROM food_fts").fetchone()[0]==qa["total"]
+          assert db.execute("SELECT count(*) FROM foods WHERE source='GeorgianRecipeEstimate'").fetchone()[0]==qa["new_recipe_estimates"]
+          assert db.execute("SELECT count(*) FROM foods WHERE source='OpenFoodFacts'").fetchone()[0]==qa["original_source_rows"]
+          assert db.execute("SELECT count(*) FROM foods WHERE source='GeorgianRecipeEstimate' AND (source_url NOT LIKE 'https://%' OR quality_flags NOT LIKE '%recipe_estimate%')").fetchone()[0]==0
+          print("APP_FOOD_PACK_1_1_RELEASE_QA_PASSED",qa["total"],qa["salads_added"])
+          db.close()
+          PY
+      - name: Upload independently verified QA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: georgia-1.1-candidate-complete
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Publish a NEW normal GitHub Release (main only)
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        run: |
+          set -euo pipefail
+          if gh release view georgia-1.1 --repo "$GH_REPO" >/dev/null 2>&1; then
+            echo "Existing release georgia-1.1 is immutable; refusing overwrite."
+            gh release view georgia-1.1 --repo "$GH_REPO" --json isPrerelease --jq '.isPrerelease' | grep -qx false
+            exit 0
+          fi
+          gh release create georgia-1.1 \
+            dist/Georgia-OpenFoodFacts.dthpack \
+            dist/Georgia-1.1-Offline-Backup.zip \
+            dist/pack-index.json dist/qa-report.json \
+            dist/SOURCES_AND_LIMITATIONS.md dist/RECIPE_NOTES_HE.txt dist/SHA256SUMS \
+            --repo "$GH_REPO" \
+            --title "Georgia 1.1 · Georgian dishes and salads, QA candidate" \
+            --notes "Adds authentic, *sourced recipe nutrition estimates* to all unchanged 1.0 Open Food Facts products. Includes khinkali, three khachapuri variants, Georgian salads, walnut pkhali and other food. Nutritional estimates are not verified restaurant calories or lab measurements. Pack and SHA256 QA passed; installation and offline searching on a physical iPhone remain to be tested. Previous release georgia-1.0 is preserved."
+          gh release view georgia-1.1 --repo "$GH_REPO" --json isPrerelease --jq '.isPrerelease' | grep -qx false
+          mkdir -p published
+          gh release download georgia-1.1 --repo "$GH_REPO" \
+            --pattern pack-index.json --pattern SHA256SUMS --dir published
+          cmp published/pack-index.json dist/pack-index.json
+          cmp published/SHA256SUMS dist/SHA256SUMS
+          echo "VERIFIED_ORDINARY_RELEASE=https://github.com/$GH_REPO/releases/tag/georgia-1.1"
