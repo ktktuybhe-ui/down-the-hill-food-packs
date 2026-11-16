@@ -7,11 +7,14 @@ import argparse,hashlib,json,re,sqlite3,struct,tempfile,random
 from pathlib import Path
 
 MAGIC=b"DTHPK1\n"
-HE=re.compile("[\u0590-\u05ff]")
+HE=re.compile("[א-ת]")
 KA=re.compile("[\u10a0-\u10ff]")
-EL=re.compile("[\u0370-\u03ff]")
+EL=re.compile("[\u0370-\u03ff\u1f00-\u1fff]")
+CYRILLIC=re.compile("[\u0400-\u052f]")
+UKRAINIAN=re.compile("[іїєґ]",re.IGNORECASE)
 LANG={"GE":"ka","GR":"el","ES":"es","IT":"it","FR":"fr"}
-BRIDGE={"ka":"Helsinki-NLP/opus-mt-ka-en","el":"Helsinki-NLP/opus-mt-el-en",
+BRIDGE={"ka":"Helsinki-NLP/opus-mt-ka-en","el":"Helsinki-NLP/opus-mt-grk-en",
+        "ru":"Helsinki-NLP/opus-mt-ru-en","uk":"Helsinki-NLP/opus-mt-uk-en",
         "es":"Helsinki-NLP/opus-mt-es-en","it":"Helsinki-NLP/opus-mt-it-en",
         "fr":"Helsinki-NLP/opus-mt-fr-en"}
 PROTECTED=["id","source","source_id","name_de","name_en","brand","barcode","base_unit",
@@ -46,6 +49,35 @@ def translated_map(names, model, batch_size=16):
   if at%(16*50)==0:print("NAMES_PROGRESS",model,at,len(names),flush=True)
  del pipe
  return result
+GE_FALLBACK = "facebook/m2m100_418M"
+GE_FALLBACK_REVISION = "55c2e61bbf05dfb8d7abccdc3fae6fc8512fd636"
+
+
+def direct_hebrew(by_language):
+ from transformers import M2M100ForConditionalGeneration, M2M100Tokenizer
+ import torch
+
+ model = M2M100ForConditionalGeneration.from_pretrained(GE_FALLBACK, revision=GE_FALLBACK_REVISION)
+ tokenizer = M2M100Tokenizer.from_pretrained(GE_FALLBACK, revision=GE_FALLBACK_REVISION)
+ result = {}
+ with torch.inference_mode():
+  for language, terms in by_language.items():
+   tokenizer.src_lang = language
+   unique = sorted(set(terms.values()))
+   translated = {}
+   for start in range(0, len(unique), 16):
+    chunk = unique[start:start+16]
+    inputs = tokenizer(chunk, return_tensors="pt", padding=True, truncation=True, max_length=160)
+    outputs = model.generate(**inputs, forced_bos_token_id=tokenizer.get_lang_id("he"), max_new_tokens=100)
+    translated.update(zip(chunk, tokenizer.batch_decode(outputs, skip_special_tokens=True), strict=True))
+   result.update({id: translated[name].strip() for id, name in terms.items()})
+ return result
+
+
+def valid_hebrew(label):
+ return bool(HE.search(label)) and len(label) <= 160
+
+
 def run(args):
  meta,payload=unpack(args.source)
  code=meta["region"]
@@ -65,28 +97,43 @@ def run(args):
     if he and HE.search(he):continue
     source=str(en or "").strip()
     original=str(local or "").strip()
-    if source and not (KA.search(source) or EL.search(source)):
-     english[id]=source
-    elif original:
-     lang=LANG[code]
-     # Georgian/Greek script is translated by native-language model.
-     needs_bridge=(lang=="ka" and KA.search(original)) or (lang=="el" and EL.search(original)) or lang in ("es","it","fr")
-     if needs_bridge:
-      bridge_terms[id]=original
-     else:english[id]=original
-   if bridge_terms:
-    model=BRIDGE[LANG[code]]
-    translated=translated_map(sorted(set(bridge_terms.values())),model)
-    for id,name in bridge_terms.items():
+    name=source or original
+    if not name:continue
+    if KA.search(name):
+     language="ka"
+    elif EL.search(name):
+     language="el"
+    elif CYRILLIC.search(name):
+     language="uk" if UKRAINIAN.search(name) else "ru"
+    elif LANG[code] in ("es","it","fr") and (not source or source==original):
+     language=LANG[code]
+    else:
+     english[id]=name
+     continue
+    bridge_terms.setdefault(language,{})[id]=name
+   for language,terms in bridge_terms.items():
+    translated=translated_map(sorted(set(terms.values())),BRIDGE[language])
+    for id,name in terms.items():
      bridged=translated.get(name)
      if bridged:english[id]=bridged
    unique=sorted(set(english.values()))
    labels=translated_map(unique,"Helsinki-NLP/opus-mt-en-he")
+   labels_by_id={id:labels.get(name,"").strip() for id,name in english.items()}
+   if code=="GE":
+    fallback={}
+    bridged_ids=set()
+    for language,terms in bridge_terms.items():
+     bridged_ids.update(terms)
+     missing={id:name for id,name in terms.items() if not valid_hebrew(labels_by_id.get(id,""))}
+     if missing:fallback[language]=missing
+    missing={id:name for id,name in english.items()
+             if id not in bridged_ids and not valid_hebrew(labels_by_id.get(id,""))}
+    if missing:fallback["en"]=missing
+    if fallback:labels_by_id.update(direct_hebrew(fallback))
    changes=0
    for id,local,en,he,search,brand in rows:
-    if id not in english:continue
-    label=labels.get(english[id],"").strip()
-    if not HE.search(label) or len(label)>160:continue
+    label=labels_by_id.get(id,"")
+    if not valid_hebrew(label):continue
     # Keep English/original and brand words in FTS; only ADD Hebrew.
     db.execute("UPDATE foods SET name_he=?,search_text=? WHERE id=?",
                (label,str(search or "")+" "+label,id))
@@ -107,16 +154,19 @@ def run(args):
    updated={**meta,"version":args.version,"sha256":hashlib.sha256(sql).hexdigest()}
    header=json.dumps(updated,ensure_ascii=False,separators=(",",":")).encode()
    if len(header)>8192:raise RuntimeError("Header too long")
-   pack=out/Path(args.source).name
-   pack.write_bytes(MAGIC+struct.pack(">I",len(header))+header+sql)
    qa={"region":code,"records":count,"hebrew_name_records":covered,"coverage":round(covered/count,5),
       "changed_labels":changes,"untranslated":count-covered,"source_rows_sha256_before":before,
-      "source_rows_sha256_after":after,"translation_method":"Helsinki-NLP models (Apache-2.0)",
+      "source_rows_sha256_after":after,"translation_method":"Helsinki-NLP models (Apache-2.0)" +
+      ("; facebook/m2m100_418M (MIT) for missing labels" if code=="GE" and fallback else ""),
       "human_linguistic_qa_completed":False,"sample_first_100":samples,
       "sample_20_translated":original_100}
+   qa["sample_untranslated"] = [row[:3] for row in rows if not valid_hebrew(str(row[3] or ""))
+                               and not valid_hebrew(labels_by_id.get(row[0], ""))][:100]
    (out/"hebrew-translation-report.json").write_text(json.dumps(qa,ensure_ascii=False,indent=2)+"\n")
    print("COUNTRY_HEBREW_QA",json.dumps({k:v for k,v in qa.items() if not k.startswith("sample_")},ensure_ascii=False),flush=True)
-   if qa["coverage"]<args.min_coverage:raise RuntimeError("Hebrew coverage under threshold; no production release")
+   if covered/count<args.min_coverage:raise RuntimeError("Hebrew coverage under threshold; no production release")
+   pack=out/Path(args.source).name
+   pack.write_bytes(MAGIC+struct.pack(">I",len(header))+header+sql)
   finally:
    if db is not None: db.close()
 if __name__=="__main__":

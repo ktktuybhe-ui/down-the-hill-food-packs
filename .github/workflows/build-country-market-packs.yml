@@ -1,9 +1,16 @@
 name: Build five country-market food packs from OFF country CSV exports
 on:
   push:
+    branches: [main]
     paths:
       - '.github/workflows/build-country-market-packs.yml'
       - 'builder/build_country_market_packs.py'
+      - 'builder/export_off_snapshot.py'
+  pull_request:
+    paths:
+      - '.github/workflows/build-country-market-packs.yml'
+      - 'builder/build_country_market_packs.py'
+      - 'builder/export_off_snapshot.py'
   workflow_dispatch:
 permissions:
   contents: read
@@ -32,11 +39,7 @@ jobs:
           - country: GR
             english: greece
             title: Greece
-    permissions:
-      contents: write
     env:
-      GH_TOKEN: ${{ github.token }}
-      GH_REPO: ${{ github.repository }}
       COUNTRY: ${{ matrix.country }}
       ENGLISH: ${{ matrix.english }}
       TITLE: ${{ matrix.title }}
@@ -51,14 +54,22 @@ jobs:
           python -m pip install -r builder/requirements.txt
           python -m py_compile builder/build_country_market_packs.py
           python -m unittest discover -s tests -v
-      - name: Download the country-filtered official Open Food Facts CSV export (not rate-limited API pages)
+      - name: Download official Open Food Facts country data
         run: |
           mkdir -p source
           URL="https://world.openfoodfacts.org/cgi/search.pl?action=process&tagtype_0=countries&tag_contains_0=contains&tag_0=$ENGLISH&download=on&download_format=csv"
-          curl --fail --location --silent --show-error --retry 4 --retry-all-errors --retry-delay 25 \
-            --connect-timeout 30 --max-time 1800 \
+          if curl --fail --location --silent --show-error --retry 1 --retry-max-time 200 \
+            --connect-timeout 15 --max-time 120 \
             --user-agent 'DownTheHill-TravelPack/0.6.6 (contact github.com/ktktuybhe-ui/down-the-hill-food-packs)' \
-            --output source/country.csv "$URL"
+            --output source/country.csv "$URL"; then
+            printf '%s\n' "$URL" > source/SOURCE-URL.txt
+          else
+            rm -f source/country.csv
+            python -m pip install 'duckdb==1.4.4'
+            revision=f2c887f344701a3d6ad7b0d3fa9626a842088789
+            python builder/export_off_snapshot.py --revision "$revision" --country "$COUNTRY" --output source/country.csv
+            printf '%s\n' "https://huggingface.co/datasets/openfoodfacts/product-database/resolve/$revision/food.parquet" > source/SOURCE-URL.txt
+          fi
           test "$(stat -c%s source/country.csv)" -gt 1000
           python - <<'PY'
           import csv
@@ -112,22 +123,16 @@ jobs:
           print("APP_DATA_QA_PASSED",os.environ["COUNTRY"],meta["count"])
           PY
           unzip -tq "dist/$TITLE-Food-Pack-Offline-Backup.zip"
-          cp source/SOURCE-SHA256SUMS dist/
-      - name: Publish auditable candidate with independent offline ZIP, not an unreviewed installation
-        run: |
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Refuse to overwrite existing source release"
-            exit 1
-          fi
-          gh release create "$TAG" \
-            "dist/$TITLE-OpenFoodFacts.dthpack" "dist/$TITLE-Food-Pack-Offline-Backup.zip" \
-            dist/pack-index.json dist/qa-report.json dist/ATTRIBUTION.md \
-            dist/LIMITATIONS_HE.txt dist/SHA256SUMS dist/SOURCE-SHA256SUMS \
-            --target "$GITHUB_SHA" --prerelease \
-            --title "$TITLE · verified food product source (Hebrew expansion pending)" \
-            --notes "Country-filtered official Open Food Facts CSV data (ODbL 1.0), original macros and source serving values; numeric data never fabricated. Complete source/product/FTS/SHA256 QA passed. Country-market packaged products ONLY, not full traditional-food coverage. Hebrew labels are incomplete. Candidate is intentionally NOT visible for installation in Build 34 until translation and app-compatibility QA. Full independent offline ZIP included."
-          gh release view "$TAG" --json isPrerelease --jq '.isPrerelease' | grep -qx true
-          mkdir -p downloaded
-          gh release download "$TAG" --pattern 'SHA256SUMS' --pattern 'pack-index.json' --dir downloaded
-          cmp dist/pack-index.json downloaded/pack-index.json
-          cmp dist/SHA256SUMS downloaded/SHA256SUMS
+          cp source/SOURCE-SHA256SUMS source/SOURCE-URL.txt dist/
+      - name: Upload verified source pack for translation and QA
+        uses: actions/upload-artifact@v4
+        with:
+          name: country-source-${{ matrix.country }}
+          path: |
+            dist/*.dthpack
+            dist/*.zip
+            dist/*.json
+            dist/*.md
+            dist/*.txt
+            dist/*SHA256SUMS
+          if-no-files-found: error
