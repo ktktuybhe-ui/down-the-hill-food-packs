@@ -1,0 +1,332 @@
+{
+  "schema": 1,
+  "title": "Georgia traditional dishes coverage for Down the Hill Build 36",
+  "stage": "curation-only-not-importable",
+  "current_pack": {
+    "packID": "travel.ge",
+    "version": "1.0",
+    "source": "OpenFoodFacts",
+    "scope": "country-market packaged products; 574 eligible rows"
+  },
+  "rules": [
+    "Do not create zero-valued or fake nutrient rows for foods without a reliable, legally reusable source.",
+    "Keep currently installed Georgia 1.0 and all other packs, food history, photo files, and personal foods untouched.",
+    "Nutrition for a mixed dish must have a traceable per-100g basis and be labeled recipe estimate when appropriate.",
+    "Never represent a recipe estimate as packaging data or as directly measured USDA composition.",
+    "Do not collapse salad variants that materially differ in walnuts, oil or cheese.",
+    "Source and original Hebrew/English/Georgian names must be discoverable in offline FTS.",
+    "Where recipes and packaged products overlap, preserve distinct source/variant identity and appropriate ranking.",
+    "Natural serving choices must have editable weights; original per-100g remains immutable.",
+    "Candidate references establish possible data sourcing, not redistribution permission or QA approval."
+  ],
+  "dishes": [
+    {
+      "id": "khinkali-meat",
+      "he": "חינקלי בשר",
+      "en": "Khinkali (meat)",
+      "ka": "ხინკალი",
+      "group": "dumplings",
+      "reference": "https://gulianigeorgia.ge/en/health/georgian-dishes/khinkali/",
+      "serving": "piece",
+      "sourceStatus": "candidate_recipe_estimate"
+    },
+    {
+      "id": "khinkali-mushroom",
+      "he": "חינקלי פטריות",
+      "en": "Mushroom khinkali",
+      "ka": "",
+      "group": "dumplings",
+      "reference": "https://georgia.travel/a-guide-to-vegetarian-georgian-food",
+      "serving": "piece",
+      "sourceStatus": "nutrient_source_required"
+    },
+    {
+      "id": "khinkali-cheese",
+      "he": "חינקלי גבינה",
+      "en": "Cheese khinkali",
+      "ka": "",
+      "group": "dumplings",
+      "reference": "https://georgia.travel/a-guide-to-vegetarian-georgian-food",
+      "serving": "piece",
+      "sourceStatus": "nutrient_source_required"
+    },
+    {
+      "id": "khinkali-potato",
+      "he": "חינקלי תפוחי אדמה",
+      "en": "Potato khinkali",
+      "ka": "",
+      "group": "dumplings",
+      "reference": "https://georgia.travel/a-guide-to-vegetarian-georgian-food",
+      "serving": "piece",
+      "sourceStatus": "nutrient_source_required"
+    },
+    {
+      "id": "khachapuri-adjaruli",
+      "he": "חצ׳פורי אצ׳רולי",
+      "en": "Adjarian khachapuri",
+      "ka": "აჭარული ხაჭაპური",
+      "group": "khachapuri",
+      "reference": "https://gulianigeorgia.ge/en/health/georgian-dishes/khachapuri-adjaruli/",
+      "serving": "boat",
+      "sourceStatus": "candidate_recipe_estimate"
+    },
+    {
+      "id": "khachapuri-imeruli",
+      "he": "חצ׳פורי אימרולי",
+      "en": "Imeruli khachapuri",
+      "ka": "იმერული ხაჭაპური",
+      "group": "khachapuri",
+      "reference": "https://gulianigeorgia.ge/en/health/georgian-dishes/khachapuri-imeruli/",
+      "serving": "slice",
+      "sourceStatus": "candidate_recipe_estimate"
+    },
+    {
+      "id": "khachapuri-megruli",
+      "he": "חצ׳פורי מגרולי",
+      "en": "Megruli khachapuri",
+      "ka": "მეგრული ხაჭაპური",
+      "group": "khachapuri",
+      "reference": "https://gulianigeorgia.ge/en/health/georgian-dishes/khachapuri-megruli/",
+      "serving": "slice",
+      "sourceStatus": "candidate_recipe_estimate"
+    },
+    {
+      "id": "sulguni",
+      "he": "גבינת סולוגוני",
+      "en": "Sulguni cheese",
+      "ka": "სულგუნი",
+      "group": "cheese",
+      "reference": "https://georgia.travel/a-guide-to-vegetarian-georgian-food",
+      "serving": "gram",
+      "sourceStatus": "nutrient_source_required"
+    },
+    {
+      "id": "churchkhela",
+      "he": "צ׳ורצ׳חלה",
+      "en": "Churchkhela",
+      "ka": "ჩურჩხელა",
+      "group": "sweet",
+      "reference": "https://gulianigeorgia.ge/en/health/georgian-dishes/",
+      "serving": "piece",
+      "sourceStatus": "candidate_recipe_estimate"
+    },
+    {
+      "id": "tkemali",
+      "he": "רוטב טקמאלי",
+      "en": "Tkemali",
+      "ka": "ტყემალი",
+      "group": "sauce",
+      "reference": "https://foodlab.ge/en/categories/georgian-cuisine",
+      "serving": "gram",
+      "sourceStatus": "nutrient_source_required"
+    },
+    {
+      "id": "lobio",
+      "he": "לוביו",
+      "en": "Lobio",
+      "ka": "ლობიო",
+      "group": "stew",
+      "reference": "https://gulianigeorgia.ge/en/health/georgian-dishes/",
+      "serving": "bowl",
+      "sourceStatus": "candidate_recipe_estimate"
+    },
+    {
+      "id": "ajapsandali",
+      "he": "אג׳פסנדלי",
+      "en": "Ajapsandali",
+      "ka": "აჯაფსანდალი",
+      "group": "stew",
+      "reference": "https://gulianigeorgia.ge/en/health/georgian-dishes/",
+      "serving": "bowl",
+      "sourceStatus": "candidate_recipe_estimate"
+    },
+    {
+      "id": "mtsvadi",
+      "he": "מצוואדי",
+      "en": "Mtsvadi",
+      "ka": "მწვადი",
+      "group": "meat",
+      "reference": "https://gulianigeorgia.ge/en/health/georgian-dishes/",
+      "serving": "skewer",
+      "sourceStatus": "candidate_recipe_estimate"
+    },
+    {
+      "id": "spanish-salad-spinach",
+      "he": "סלט תרד גאורגי",
+      "en": "Georgian spinach salad (Ispanakhis salata)",
+      "ka": "ისპანახის სალათა",
+      "group": "salad",
+      "reference": "https://en.wikipedia.org/wiki/Georgian_cuisine",
+      "serving": "gram",
+      "sourceStatus": "nutrient_source_required"
+    },
+    {
+      "id": "spinach-pkhali",
+      "he": "פחאלי תרד ואגוזים",
+      "en": "Spinach pkhali",
+      "ka": "ისპანახის ფხალი",
+      "group": "salad",
+      "reference": "https://gulianigeorgia.ge/en/health/georgian-dishes/pkhali-spinach/",
+      "serving": "piece",
+      "sourceStatus": "candidate_recipe_estimate"
+    },
+    {
+      "id": "beetroot-pkhali",
+      "he": "פחאלי סלק ואגוזים",
+      "en": "Beetroot pkhali",
+      "ka": "ჭარხლის ფხალი",
+      "group": "salad",
+      "reference": "https://gulianigeorgia.ge/en/health/georgian-dishes/pkhali-beet/",
+      "serving": "piece",
+      "sourceStatus": "candidate_recipe_estimate"
+    },
+    {
+      "id": "beet-greens-pkhali",
+      "he": "פחאלי עלי סלק",
+      "en": "Beet greens pkhali",
+      "ka": "",
+      "group": "salad",
+      "reference": "https://georgia.travel/a-guide-to-vegetarian-georgian-food",
+      "serving": "piece",
+      "sourceStatus": "nutrient_source_required"
+    },
+    {
+      "id": "green-bean-pkhali",
+      "he": "פחאלי שעועית ירוקה",
+      "en": "Green bean pkhali",
+      "ka": "",
+      "group": "salad",
+      "reference": "https://georgia.travel/a-guide-to-vegetarian-georgian-food",
+      "serving": "piece",
+      "sourceStatus": "nutrient_source_required"
+    },
+    {
+      "id": "cabbage-pkhali",
+      "he": "פחאלי כרוב",
+      "en": "Cabbage pkhali",
+      "ka": "",
+      "group": "salad",
+      "reference": "https://georgianeats.com/food-culture/salads-cold-dishes/",
+      "serving": "piece",
+      "sourceStatus": "nutrient_source_required"
+    },
+    {
+      "id": "leek-pkhali",
+      "he": "פחאלי כרישה",
+      "en": "Leek pkhali",
+      "ka": "",
+      "group": "salad",
+      "reference": "https://georgia.travel/a-guide-to-vegetarian-georgian-food",
+      "serving": "piece",
+      "sourceStatus": "nutrient_source_required"
+    },
+    {
+      "id": "carrot-pkhali",
+      "he": "פחאלי גזר",
+      "en": "Carrot pkhali",
+      "ka": "",
+      "group": "salad",
+      "reference": "https://georgia.travel/a-guide-to-vegetarian-georgian-food",
+      "serving": "piece",
+      "sourceStatus": "nutrient_source_required"
+    },
+    {
+      "id": "pkhali-assortment",
+      "he": "מבחר פחאלי",
+      "en": "Pkhali assortment",
+      "ka": "ფხალის ასორტი",
+      "group": "salad",
+      "reference": "https://georgia.travel/a-guide-to-vegetarian-georgian-food",
+      "serving": "piece",
+      "sourceStatus": "requires_composition_selection"
+    },
+    {
+      "id": "tomato-cucumber-salad",
+      "he": "סלט עגבניות ומלפפונים גאורגי",
+      "en": "Georgian tomato cucumber salad",
+      "ka": "კიტრი პომიდვრის სალათა",
+      "group": "salad",
+      "reference": "https://maspindzeli.ge/recipes/georgian-salad/",
+      "serving": "bowl",
+      "sourceStatus": "nutrient_source_required"
+    },
+    {
+      "id": "tomato-cucumber-walnuts",
+      "he": "סלט גאורגי עגבניות ומלפפונים עם אגוזים",
+      "en": "Georgian tomato cucumber salad with walnuts",
+      "ka": "",
+      "group": "salad",
+      "reference": "https://maspindzeli.ge/recipes/georgian-salad/",
+      "serving": "bowl",
+      "sourceStatus": "nutrient_source_required"
+    },
+    {
+      "id": "herb-green-salad",
+      "he": "סלט ירוקים ועשבי תיבול גאורגי",
+      "en": "Georgian herb green salad",
+      "ka": "მწვანე სალათი",
+      "group": "salad",
+      "reference": "https://foodlab.ge/en/recipes/herb-salad",
+      "serving": "bowl",
+      "sourceStatus": "candidate_recipe_estimate"
+    },
+    {
+      "id": "beetroot-salad",
+      "he": "סלט סלק גאורגי",
+      "en": "Georgian beetroot salad",
+      "ka": "ჭარხლის სალათა",
+      "group": "salad",
+      "reference": "https://en.wikipedia.org/wiki/Georgian_cuisine",
+      "serving": "bowl",
+      "sourceStatus": "nutrient_source_required"
+    },
+    {
+      "id": "carrot-walnut-salad",
+      "he": "סלט גזר עם אגוזי מלך",
+      "en": "Carrot salad with walnuts",
+      "ka": "",
+      "group": "salad",
+      "reference": "https://foodlab.ge/en/recipes/carrot-salad-with-walnuts",
+      "serving": "bowl",
+      "sourceStatus": "candidate_recipe_estimate"
+    },
+    {
+      "id": "green-tomato-walnut-salad",
+      "he": "סלט עגבניות ירוקות עם אגוזים",
+      "en": "Green tomato salad with walnuts",
+      "ka": "",
+      "group": "salad",
+      "reference": "https://foodlab.ge/en/recipes/green-tomato-salad-with-walnuts",
+      "serving": "bowl",
+      "sourceStatus": "candidate_recipe_estimate"
+    },
+    {
+      "id": "eggplant-walnut-salad",
+      "he": "סלט חצילים עם אגוזים",
+      "en": "Eggplant salad with walnuts",
+      "ka": "",
+      "group": "salad",
+      "reference": "https://foodlab.ge/en/recipes/eggplant-salad-with-walnuts",
+      "serving": "bowl",
+      "sourceStatus": "candidate_recipe_estimate"
+    },
+    {
+      "id": "badrijani-nigvzit",
+      "he": "גלילות חציל עם אגוזים",
+      "en": "Badrijani nigvzit",
+      "ka": "ბადრიჯანი ნიგვზით",
+      "group": "salad",
+      "reference": "https://gulianigeorgia.ge/en/health/georgian-dishes/",
+      "serving": "piece",
+      "sourceStatus": "candidate_recipe_estimate"
+    }
+  ],
+  "releaseGate": [
+    "all mandatory core entries available with sourced nutrition or explicit documented pending exception; no phantom rows",
+    "min 12 salad variations searchable and nutritionally distinct where relevant",
+    "offline Hebrew, English, Georgian search for curated records",
+    "reproduce source conversions and edit quantities on real iPhone",
+    "run app data migration and uninstall/regression tests",
+    "do not overwrite georgia-1.0 release"
+  ]
+}
