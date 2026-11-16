@@ -46,6 +46,7 @@ jobs:
       SOURCE_TAG: country-${{ matrix.country }}-source-qa-3
       SOURCE_RUN: ${{ github.event.workflow_run.id }}
       EVENT_NAME: ${{ github.event_name }}
+      PR_BRANCH: ${{ github.head_ref }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -55,23 +56,37 @@ jobs:
         id: source
         run: |
           mkdir -p original
+          # A PR is only green when the country pack was ACTUALLY translated.
+          # Look up a completed source workflow on the same PR branch, using
+          # its immutable Actions artifact. Never return green via skipped steps.
+          if [[ "$EVENT_NAME" == pull_request ]]; then
+            if [[ -z "$PR_BRANCH" ]]; then
+              echo "Missing pull request source branch" >&2
+              exit 1
+            fi
+            SOURCE_RUN="$(gh run list --repo "$GH_REPO" \
+              --workflow build-country-market-packs.yml --branch "$PR_BRANCH" \
+              --event pull_request --limit 30 \
+              --json databaseId,conclusion \
+              --jq '[.[] | select(.conclusion == "success") | .databaseId][0] // empty')"
+            if [[ -z "$SOURCE_RUN" ]]; then
+              echo "No successful source run on PR branch $PR_BRANCH. Run source workflow first." >&2
+              exit 1
+            fi
+          fi
           if [[ -n "$SOURCE_RUN" ]]; then
-            if ! gh run view "$SOURCE_RUN" --json jobs --jq \
-              ".jobs[] | select(.name == \"$REGION source export, pack and QA\") | .conclusion" | grep -qx success; then
-              echo "Source build did not succeed for $REGION"
-              echo "available=false" >> "$GITHUB_OUTPUT"
-              exit 0
+            if ! gh run view "$SOURCE_RUN" --repo "$GH_REPO" --json jobs --jq \
+              ".jobs[] | select(.name == \\"$REGION source export, pack and QA\\") | .conclusion" | grep -qx success; then
+              echo "Source build did not succeed for $REGION on run $SOURCE_RUN" >&2
+              exit 1
             fi
-            gh run download "$SOURCE_RUN" --name "country-source-$REGION" --dir original
-          elif [[ "$EVENT_NAME" == pull_request && "$REGION" != GE && "$REGION" != GR ]]; then
-            echo "available=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          else
-            if [[ "$REGION" != GE && "$REGION" != GR ]] && ! gh release view "$SOURCE_TAG" >/dev/null 2>&1; then
-              echo "available=false" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
+            gh run download "$SOURCE_RUN" --repo "$GH_REPO" \
+              --name "country-source-$REGION" --dir original
+          elif [[ "$EVENT_NAME" == workflow_dispatch && ( "$REGION" == GE || "$REGION" == GR ) ]]; then
             gh release download "$SOURCE_TAG" --dir original
+          else
+            echo "No suitable source run for $REGION; will not silently skip translation." >&2
+            exit 1
           fi
           echo "available=true" >> "$GITHUB_OUTPUT"
           (cd original && sha256sum --check --strict SHA256SUMS)
