@@ -76,7 +76,7 @@ jobs:
           fi
           if [[ -n "$SOURCE_RUN" ]]; then
             if ! gh run view "$SOURCE_RUN" --repo "$GH_REPO" --json jobs --jq \
-              ".jobs[] | select(.name == \\"$REGION source export, pack and QA\\") | .conclusion" | grep -qx success; then
+              ".jobs[] | select(.name == \"$REGION source export, pack and QA\") | .conclusion" | grep -qx success; then
               echo "Source build did not succeed for $REGION on run $SOURCE_RUN" >&2
               exit 1
             fi
