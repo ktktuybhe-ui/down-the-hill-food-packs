@@ -1,0 +1,175 @@
+name: Promote translated country packs to normal GitHub Releases after hard QA
+on:
+  push:
+    paths:
+      - '.github/workflows/promote-translated-countries.yml'
+  workflow_dispatch:
+  workflow_run:
+    workflows: ['Build five country-market food packs from OFF country CSV exports']
+    types: [completed]
+permissions:
+  contents: read
+jobs:
+  translate_and_verify:
+    name: ${{ matrix.title }} Hebrew translation and approved pack QA
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - country: georgia
+            title: Georgia
+            region: GE
+          - country: spain
+            title: Spain
+            region: ES
+          - country: italy
+            title: Italy
+            region: IT
+          - country: france
+            title: France
+            region: FR
+          - country: greece
+            title: Greece
+            region: GR
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TITLE: ${{ matrix.title }}
+      REGION: ${{ matrix.region }}
+      TAG: ${{ matrix.country }}-1.0
+      SOURCE_TAG: country-${{ matrix.country }}-source-qa-${{ github.event.workflow_run.run_number || '3' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Confirm source candidate and skip unavailable sources
+        id: source
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "This normal release already exists. Preserve it without modification."
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! gh release view "$SOURCE_TAG" >/dev/null 2>&1; then
+            echo "No authenticated country source backup for $SOURCE_TAG; leave unpublished."
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "available=true" >> "$GITHUB_OUTPUT"
+          mkdir -p original
+          gh release download "$SOURCE_TAG" --dir original
+          (cd original && sha256sum --check --strict SHA256SUMS)
+          python - <<'PY'
+          import json,os,hashlib
+          from pathlib import Path
+          p=Path('original/pack-index.json')
+          d=json.loads(p.read_text())
+          assert d['region']==os.environ['REGION'] and d['status']=='verified'
+          assert len(d['files'])==1
+          for f in d['files']:
+              pack=Path('original')/f['file']
+              assert hashlib.sha256(pack.read_bytes()).hexdigest()==f['sha256_file']
+          print('VALID_SOURCE_CANDIDATE',os.environ['REGION'],d['files'][0]['records'])
+          PY
+      - name: Install local offline translation models
+        if: steps.source.outputs.available == 'true'
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu 'torch>=2.3,<3'
+          python -m pip install 'transformers>=4.44,<5' 'sentencepiece>=0.2' 'sacremoses>=0.1'
+          python -m py_compile builder/translate_country_he.py
+      - name: Translate only product names to Hebrew without changing original nutrition
+        if: steps.source.outputs.available == 'true'
+        run: |
+          python -u builder/translate_country_he.py \
+            --source "original/$TITLE-OpenFoodFacts.dthpack" \
+            --out translated --version '1.0' --min-coverage .90
+      - name: Verify no nutrient, serving, source or source-ID modifications
+        if: steps.source.outputs.available == 'true'
+        run: |
+          python - <<'PY'
+          import hashlib,json,sqlite3,struct,os
+          from pathlib import Path
+          name=os.environ["TITLE"]+"-OpenFoodFacts.dthpack"
+          def db_for(path):
+              raw=Path(path).read_bytes()
+              assert raw[:7]==b"DTHPK1\n"
+              n=struct.unpack(">I",raw[7:11])[0]
+              meta=json.loads(raw[11:11+n]);payload=raw[11+n:]
+              assert hashlib.sha256(payload).hexdigest()==meta["sha256"]
+              db=sqlite3.connect(":memory:");db.deserialize(payload)
+              assert db.execute("PRAGMA integrity_check").fetchone()[0]=="ok"
+              return meta,db
+          before,old=db_for("original/"+name)
+          after,new=db_for("translated/"+name)
+          protected="id,source,source_id,name_de,name_en,brand,barcode,base_unit,kcal_100,protein_100,carbs_100,fat_100,sugar_100,fiber_100,serving_size,quality_flags,source_url"
+          oldrows=old.execute("SELECT "+protected+" FROM foods ORDER BY id").fetchall()
+          newrows=new.execute("SELECT "+protected+" FROM foods ORDER BY id").fetchall()
+          assert oldrows==newrows,"Protected nutrition/serving data changed"
+          assert before["region"]==after["region"]==os.environ["REGION"]
+          assert before["count"]==after["count"]==len(oldrows)
+          assert new.execute("SELECT COUNT(*) FROM food_fts").fetchone()[0]==after["count"]
+          qa=json.loads(Path("translated/hebrew-translation-report.json").read_text())
+          assert qa["region"]==os.environ["REGION"]
+          assert qa["coverage"]>=.90
+          assert qa["human_linguistic_qa_completed"] is False
+          print("HEBREW_TRANSLATION_QA_PASSED",os.environ["REGION"],qa["hebrew_name_records"],qa["records"],qa["coverage"])
+          old.close();new.close()
+          PY
+      - name: Prepare country app index and independent full backup
+        if: steps.source.outputs.available == 'true'
+        run: |
+          cp original/ATTRIBUTION.md translated/ATTRIBUTION.md
+          cat > translated/TRANSLATION_NOTICE_HE.txt <<'EOF'
+          Standard optional country food pack. Original OFF nutrition, units, names and IDs are preserved.
+          Hebrew names were MACHINE TRANSLATED, not comprehensively reviewed by a person.
+          This represents marketed packaged foods only, NOT all local traditional recipes.
+          Some product names or translations may be inaccurate; check original labels and serving quantities.
+          Open Food Facts ODbL 1.0; translation model(s) Apache-2.0.
+          EOF
+          python - <<'PY'
+          import json,os,pathlib,hashlib
+          p=pathlib.Path("original/pack-index.json")
+          x=json.loads(p.read_text())
+          x["release_tag"]=os.environ["TAG"]
+          x["status"]="verified"
+          x["translation_review"]="machine-Hebrew-not-fully-human-reviewed"
+          for f in x["files"]:
+              file=pathlib.Path("translated")/f["file"]
+              f["bytes"]=file.stat().st_size
+              f["sha256_file"]=hashlib.sha256(file.read_bytes()).hexdigest()
+              f["version"]="1.0"
+          out=pathlib.Path("translated/pack-index.json")
+          out.write_text(json.dumps(x,ensure_ascii=False,indent=2)+"\n")
+          PY
+          (cd translated && sha256sum "$TITLE-OpenFoodFacts.dthpack" pack-index.json ATTRIBUTION.md hebrew-translation-report.json TRANSLATION_NOTICE_HE.txt > SHA256SUMS)
+          (cd translated && sha256sum --check --strict SHA256SUMS)
+          (cd translated && zip -q -9 "$TITLE-1.0-Offline-Backup.zip" "$TITLE-OpenFoodFacts.dthpack" pack-index.json ATTRIBUTION.md hebrew-translation-report.json TRANSLATION_NOTICE_HE.txt SHA256SUMS)
+          unzip -tq "translated/$TITLE-1.0-Offline-Backup.zip"
+      - name: Publish a normal app-discoverable Release only after QA
+        if: steps.source.outputs.available == 'true'
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Refusing to overwrite $TAG"
+            exit 1
+          fi
+          gh release create "$TAG" \
+            "translated/$TITLE-OpenFoodFacts.dthpack" \
+            "translated/$TITLE-1.0-Offline-Backup.zip" \
+            translated/pack-index.json translated/hebrew-translation-report.json \
+            translated/ATTRIBUTION.md translated/TRANSLATION_NOTICE_HE.txt \
+            translated/SHA256SUMS \
+            --target "$GITHUB_SHA" \
+            --title "$TITLE 1.0 · optional Hebrew market-food pack" \
+            --notes "STANDARD optional pack for Down the Hill Build 34. Country-marketed Open Food Facts products with authentic verified nutrient and serving values, Hebrew machine-translated name labels (minimum 90% Hebrew text coverage), SHA256 integrity and full ZIP. NOTE: names are machine translated and not completely human linguistically reviewed; not a comprehensive traditional-dish database. Original language remains searchable. ODbL 1.0 / Apache-2.0."
+          gh release view "$TAG" --json isPrerelease --jq '.isPrerelease' | grep -qx false
+          mkdir -p verify-download
+          gh release download "$TAG" --pattern 'pack-index.json' --pattern 'SHA256SUMS' --dir verify-download
+          cmp translated/pack-index.json verify-download/pack-index.json
+          cmp translated/SHA256SUMS verify-download/SHA256SUMS
