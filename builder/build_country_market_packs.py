@@ -39,16 +39,35 @@ def v(x):
  except (ValueError,TypeError):return None
 
 def nutrients(p):
+ # OFF 2026 flattened CSV exports expose provenance-specific nested label fields
+ # rather than the older nutriments.energy-kcal_100g columns. Do NOT combine
+ # nutrients across different label origins or per-100g vs per-100ml baselines.
  preferred=["100ml","100g"] if str(p.get("nutrition_data_per","")).lower()=="100ml" else ["100g","100ml"]
- for u in preferred:
-  kcal=v(p.get("energy-kcal_"+u))
-  if kcal is None:
-   kj=v(p.get("energy-kj_"+u))
-   if kj is not None:kcal=kj/4.184
-  n={"kcal":kcal,"protein":v(p.get("proteins_"+u)),"carbs":v(p.get("carbohydrates_"+u)),
-     "fat":v(p.get("fat_"+u)),"sugar":v(p.get("sugars_"+u)),"fiber":v(p.get("fiber_"+u))}
-  if check(n):return n,("ml" if u=="100ml" else "g")
- return None,None
+ sources=("manufacturer","packaging")
+ for unit in preferred:
+  for src in sources:
+   prefix=f"nutrition.input_sets.{src}.as_sold.{unit}.nutrients."
+   def field(key):
+    return v(p.get(prefix+key+".value"))
+   kcal=field("energy-kcal")
+   if kcal is None:
+    kj=field("energy-kj")
+    if kj is not None:kcal=kj/4.184
+   n={"kcal":kcal,"protein":field("proteins"),"carbs":field("carbohydrates"),
+      "fat":field("fat"),"sugar":field("sugars"),"fiber":field("fiber")}
+   if check(n):return n,("ml" if unit=="100ml" else "g"),src
+ # Compatible with legacy OFF exports where nutrients appear as flat fields.
+ for unit in preferred:
+  for prefix in ("","nutriments."):
+   def field(key): return v(p.get(prefix+key+"_"+unit))
+   kcal=field("energy-kcal")
+   if kcal is None:
+    kj=field("energy-kj")
+    if kj is not None:kcal=kj/4.184
+   n={"kcal":kcal,"protein":field("proteins"),"carbs":field("carbohydrates"),
+      "fat":field("fat"),"sugar":field("sugars"),"fiber":field("fiber")}
+   if check(n):return n,("ml" if unit=="100ml" else "g"),"legacy"
+ return None,None,None
 
 def make_row(p,code):
  cfg=COUNTRIES[code]
@@ -62,14 +81,23 @@ def make_row(p,code):
  local=str(p.get("product_name_"+cfg["local"]) or "").strip()
  original=str(p.get("product_name") or "").strip()
  english=str(p.get("product_name_en") or "").strip()
+ if not (local or original or english):
+  lc=str(p.get("lc") or "").strip().lower()
+  original=str(p.get("product_name_"+lc) or "").strip() if lc else ""
+ if not (local or original or english):
+  original=next((str(value).strip() for key,value in p.items() if key.startswith("product_name_") and value and str(value).strip()),"")
  if not (local or original or english):return None
- n,unit=nutrients(p)
+ n,unit,provenance=nutrients(p)
  if n is None:return None
  name=local or original or english
  # Only exact dish label matches get the curated Hebrew alias; never replace arbitrary product names.
  he=cfg["aliases"].get(name.casefold(),cfg["aliases"].get(english.casefold(),""))
  brand=str(p.get("brands") or "").strip()
  serving=v(p.get("serving_quantity"))
+ if serving is None and provenance in ("manufacturer","packaging"):
+  prefix=f"nutrition.input_sets.{provenance}.as_sold.serving."
+  source_unit=str(p.get(prefix+"per_unit") or "").lower()
+  if source_unit in (unit,unit+"s"):serving=v(p.get(prefix+"per_quantity"))
  if serving is not None and not 0.1<=serving<=5000:serving=None
  scans=v(p.get("scans_n")) or 0
  completeness=v(p.get("completeness")) or 0
@@ -94,7 +122,7 @@ def run(args):
   csv.field_size_limit(20_000_000)
   reader=csv.DictReader(handle,delimiter=delimiter)
   headers=set(reader.fieldnames or [])
-  necessary={"code","product_name","countries_tags","energy-kcal_100g","proteins_100g","carbohydrates_100g","fat_100g"}
+  necessary={"code","countries_tags"}
   if not necessary.issubset(headers):
    raise RuntimeError("Unrecognized or incomplete country export header: missing "+repr(necessary-headers))
   heap=[];source_rows=valid_rows=0
