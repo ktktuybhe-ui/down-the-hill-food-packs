@@ -1,0 +1,37 @@
+name: Probe Georgia official export channels without API crawling
+on:
+  push:
+    paths:
+      - '.github/workflows/georgia-export-probe.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Probe at most four official country export formats
+        run: |
+          python - <<'PY'
+          import urllib.parse
+          q={"action":"process","tagtype_0":"countries","tag_contains_0":"contains","tag_0":"georgia","download":"on","download_format":"csv"}
+          urls=[
+              "https://world.openfoodfacts.org/cgi/search.pl?"+urllib.parse.urlencode(q),
+              "https://world.openfoodfacts.org/country/georgia.csv",
+              "https://world.openfoodfacts.org/country/georgia.tsv",
+          ]
+          with open("/tmp/export-urls","w") as f:f.write("\n".join(urls)+"\n")
+          PY
+          n=0
+          while IFS= read -r url; do
+            n=$((n+1))
+            echo "PROBE_START $n"
+            curl --location --silent --show-error --max-time 75 --connect-timeout 12 \
+              --user-agent 'DownTheHill-Georgia-FoodPack/0.6.6 (github.com/ktktuybhe-ui/down-the-hill-food-packs)' \
+              --write-out "PROBE_RESULT_$n http=%{http_code} bytes=%{size_download} content_type=%{content_type}\n" \
+              --output "/tmp/probe-$n" "$url" || true
+            file "/tmp/probe-$n" || true
+            head -c 210 "/tmp/probe-$n" | tr '\n' ' ' || true
+            echo ''
+          done < /tmp/export-urls
