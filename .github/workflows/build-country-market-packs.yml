@@ -1,0 +1,129 @@
+name: Build five country-market food packs from OFF country CSV exports
+on:
+  push:
+    paths:
+      - '.github/workflows/build-country-market-packs.yml'
+      - 'builder/build_country_market_packs.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    name: ${{ matrix.country }} source export, pack and QA
+    runs-on: ubuntu-latest
+    timeout-minutes: 95
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - country: GE
+            english: georgia
+            title: Georgia
+          - country: ES
+            english: spain
+            title: Spain
+          - country: IT
+            english: italy
+            title: Italy
+          - country: FR
+            english: france
+            title: France
+          - country: GR
+            english: greece
+            title: Greece
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      COUNTRY: ${{ matrix.country }}
+      ENGLISH: ${{ matrix.english }}
+      TITLE: ${{ matrix.title }}
+      TAG: country-${{ matrix.english }}-source-qa-${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Validate shared country building and food pack test suite
+        run: |
+          python -m pip install -r builder/requirements.txt
+          python -m py_compile builder/build_country_market_packs.py
+          python -m unittest discover -s tests -v
+      - name: Download the country-filtered official Open Food Facts CSV export (not rate-limited API pages)
+        run: |
+          mkdir -p source
+          URL="https://world.openfoodfacts.org/cgi/search.pl?action=process&tagtype_0=countries&tag_contains_0=contains&tag_0=$ENGLISH&download=on&download_format=csv"
+          curl --fail --location --silent --show-error --retry 4 --retry-all-errors --retry-delay 25 \
+            --connect-timeout 30 --max-time 1800 \
+            --user-agent 'DownTheHill-TravelPack/0.6.6 (contact github.com/ktktuybhe-ui/down-the-hill-food-packs)' \
+            --output source/country.csv "$URL"
+          test "$(stat -c%s source/country.csv)" -gt 1000
+          python - <<'PY'
+          import csv
+          from pathlib import Path
+          path=Path("source/country.csv")
+          with path.open(encoding="utf-8-sig",newline="",errors="replace") as f:
+            header=f.readline()
+            if '<html' in header.lower() or '<!doctype' in header.lower():raise RuntimeError("OFF returned HTML, not CSV")
+            sep="\t" if header.count("\t")>header.count(",") else ","
+            cols=next(csv.reader([header],delimiter=sep))
+            print("SOURCE_EXPORT_BYTES",path.stat().st_size)
+            print("SOURCE_EXPORT_COLUMNS",len(cols),"sample",cols[:18])
+            req={"code","product_name","countries_tags","energy-kcal_100g","proteins_100g","carbohydrates_100g","fat_100g"}
+            if not req.issubset(set(cols)):raise RuntimeError("Missing country export columns "+str(req-set(cols)))
+          PY
+          sha256sum source/country.csv > source/SOURCE-SHA256SUMS
+      - name: Make isolated .dthpack with verified nutrition, search and serving metadata
+        run: |
+          python builder/build_country_market_packs.py \
+            --country "$COUNTRY" --csv source/country.csv --out dist \
+            --version '1.0' --release-tag "$TAG" --max-records 4000
+          (cd dist && sha256sum --check --strict SHA256SUMS)
+          python - <<'PY'
+          import hashlib,json,sqlite3,struct,os
+          from pathlib import Path
+          root=Path("dist")
+          index=json.loads((root/"pack-index.json").read_text())
+          assert index["status"]=="verified"
+          assert index["region"]==os.environ["COUNTRY"]
+          assert len(index["files"])==1
+          info=index["files"][0]
+          path=root/info["file"]
+          b=path.read_bytes()
+          assert hashlib.sha256(b).hexdigest()==info["sha256_file"]
+          assert b[:7]==b"DTHPK1\n"
+          n=struct.unpack(">I",b[7:11])[0]
+          meta=json.loads(b[11:11+n]);payload=b[11+n:]
+          assert meta["region"]==os.environ["COUNTRY"] and meta["source"]=="OpenFoodFacts"
+          assert hashlib.sha256(payload).hexdigest()==meta["sha256"]
+          db=sqlite3.connect(":memory:");db.deserialize(payload)
+          assert db.execute("PRAGMA integrity_check").fetchone()[0]=="ok"
+          assert db.execute("SELECT COUNT(*) FROM foods").fetchone()[0]==meta["count"]
+          assert db.execute("SELECT COUNT(*) FROM food_fts").fetchone()[0]==meta["count"]
+          assert db.execute("SELECT COUNT(*) FROM foods WHERE kcal_100 IS NULL OR protein_100 IS NULL OR carbs_100 IS NULL OR fat_100 IS NULL").fetchone()[0]==0
+          assert db.execute("SELECT COUNT(*) FROM foods WHERE base_unit NOT IN ('g','ml')").fetchone()[0]==0
+          assert db.execute("SELECT COUNT(*) FROM foods WHERE serving_size IS NOT NULL AND (serving_size<=0 OR serving_size>5000)").fetchone()[0]==0
+          print("APP_DATA_QA_PASSED",os.environ["COUNTRY"],meta["count"])
+          PY
+          unzip -tq "dist/$TITLE-Food-Pack-Offline-Backup.zip"
+          cp source/SOURCE-SHA256SUMS dist/
+      - name: Publish auditable candidate with independent offline ZIP, not an unreviewed installation
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Refuse to overwrite existing source release"
+            exit 1
+          fi
+          gh release create "$TAG" \
+            "dist/$TITLE-OpenFoodFacts.dthpack" "dist/$TITLE-Food-Pack-Offline-Backup.zip" \
+            dist/pack-index.json dist/qa-report.json dist/ATTRIBUTION.md \
+            dist/LIMITATIONS_HE.txt dist/SHA256SUMS dist/SOURCE-SHA256SUMS \
+            --target "$GITHUB_SHA" --prerelease \
+            --title "$TITLE · verified food product source (Hebrew expansion pending)" \
+            --notes "Country-filtered official Open Food Facts CSV data (ODbL 1.0), original macros and source serving values; numeric data never fabricated. Complete source/product/FTS/SHA256 QA passed. Country-market packaged products ONLY, not full traditional-food coverage. Hebrew labels are incomplete. Candidate is intentionally NOT visible for installation in Build 34 until translation and app-compatibility QA. Full independent offline ZIP included."
+          gh release view "$TAG" --json isPrerelease --jq '.isPrerelease' | grep -qx true
+          mkdir -p downloaded
+          gh release download "$TAG" --pattern 'SHA256SUMS' --pattern 'pack-index.json' --dir downloaded
+          cmp dist/pack-index.json downloaded/pack-index.json
+          cmp dist/SHA256SUMS downloaded/SHA256SUMS
