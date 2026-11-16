@@ -1,14 +1,17 @@
-name: Promote translated country packs to normal GitHub Releases after hard QA
+name: Translate and verify country food packs
 on:
-  push:
+  pull_request:
     paths:
       - '.github/workflows/promote-translated-countries.yml'
+      - 'builder/translate_country_he.py'
   workflow_dispatch:
   workflow_run:
     workflows: ['Build five country-market food packs from OFF country CSV exports']
+    branches: [main]
     types: [completed]
 permissions:
   contents: read
+  actions: read
 jobs:
   translate_and_verify:
     name: ${{ matrix.title }} Hebrew translation and approved pack QA
@@ -34,15 +37,16 @@ jobs:
           - country: greece
             title: Greece
             region: GR
-    permissions:
-      contents: write
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       TITLE: ${{ matrix.title }}
       REGION: ${{ matrix.region }}
       TAG: ${{ matrix.country }}-1.0
-      SOURCE_TAG: country-${{ matrix.country }}-source-qa-${{ github.event.workflow_run.run_number || '3' }}
+      SOURCE_TAG: country-${{ matrix.country }}-source-qa-3
+      SOURCE_RUN: ${{ github.event.workflow_run.id }}
+      EVENT_NAME: ${{ github.event_name }}
+      PR_BRANCH: ${{ github.head_ref }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -51,19 +55,39 @@ jobs:
       - name: Confirm source candidate and skip unavailable sources
         id: source
         run: |
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "This normal release already exists. Preserve it without modification."
-            echo "available=false" >> "$GITHUB_OUTPUT"
-            exit 0
+          mkdir -p original
+          # A PR is only green when the country pack was ACTUALLY translated.
+          # Look up a completed source workflow on the same PR branch, using
+          # its immutable Actions artifact. Never return green via skipped steps.
+          if [[ "$EVENT_NAME" == pull_request ]]; then
+            if [[ -z "$PR_BRANCH" ]]; then
+              echo "Missing pull request source branch" >&2
+              exit 1
+            fi
+            SOURCE_RUN="$(gh run list --repo "$GH_REPO" \
+              --workflow build-country-market-packs.yml --branch "$PR_BRANCH" \
+              --event pull_request --limit 30 \
+              --json databaseId,conclusion \
+              --jq '[.[] | select(.conclusion == "success") | .databaseId][0] // empty')"
+            if [[ -z "$SOURCE_RUN" ]]; then
+              echo "No successful source run on PR branch $PR_BRANCH. Run source workflow first." >&2
+              exit 1
+            fi
           fi
-          if ! gh release view "$SOURCE_TAG" >/dev/null 2>&1; then
-            echo "No authenticated country source backup for $SOURCE_TAG; leave unpublished."
-            echo "available=false" >> "$GITHUB_OUTPUT"
-            exit 0
+          if [[ -n "$SOURCE_RUN" ]]; then
+            if ! gh run view "$SOURCE_RUN" --repo "$GH_REPO" --json conclusion --jq '.conclusion' | grep -qx success; then
+              echo "Source build did not succeed for $REGION on run $SOURCE_RUN" >&2
+              exit 1
+            fi
+            gh run download "$SOURCE_RUN" --repo "$GH_REPO" \
+              --name "country-source-$REGION" --dir original
+          elif [[ "$EVENT_NAME" == workflow_dispatch && ( "$REGION" == GE || "$REGION" == GR ) ]]; then
+            gh release download "$SOURCE_TAG" --dir original
+          else
+            echo "No suitable source run for $REGION; will not silently skip translation." >&2
+            exit 1
           fi
           echo "available=true" >> "$GITHUB_OUTPUT"
-          mkdir -p original
-          gh release download "$SOURCE_TAG" --dir original
           (cd original && sha256sum --check --strict SHA256SUMS)
           python - <<'PY'
           import json,os,hashlib
@@ -81,7 +105,7 @@ jobs:
         if: steps.source.outputs.available == 'true'
         run: |
           python -m pip install --upgrade pip
-          python -m pip install --index-url https://download.pytorch.org/whl/cpu 'torch>=2.3,<3'
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu 'torch>=2.6,<3'
           python -m pip install 'transformers>=4.44,<5' 'sentencepiece>=0.2' 'sacremoses>=0.1'
           python -m py_compile builder/translate_country_he.py
       - name: Translate only product names to Hebrew without changing original nutrition
@@ -115,6 +139,13 @@ jobs:
           assert before["region"]==after["region"]==os.environ["REGION"]
           assert before["count"]==after["count"]==len(oldrows)
           assert new.execute("SELECT COUNT(*) FROM food_fts").fetchone()[0]==after["count"]
+          for key in ("schema", "packID", "source", "license", "sourceURL"):
+              assert after[key] == before[key]
+          assert after["schema"] == 1 and after["packID"] == "travel." + os.environ["REGION"].lower()
+          labels = new.execute("SELECT id,name_he FROM foods WHERE name_he GLOB '*[א-ת]*'").fetchall()
+          for food_id, label in labels:
+              term = '"' + label.replace('"', '""') + '"'
+              assert new.execute("SELECT 1 FROM food_fts WHERE food_fts MATCH ? AND id=?", (term, food_id)).fetchone(), food_id
           qa=json.loads(Path("translated/hebrew-translation-report.json").read_text())
           assert qa["region"]==os.environ["REGION"]
           assert qa["coverage"]>=.90
@@ -131,7 +162,7 @@ jobs:
           Hebrew names were MACHINE TRANSLATED, not comprehensively reviewed by a person.
           This represents marketed packaged foods only, NOT all local traditional recipes.
           Some product names or translations may be inaccurate; check original labels and serving quantities.
-          Open Food Facts ODbL 1.0; translation model(s) Apache-2.0.
+          Open Food Facts ODbL 1.0; Helsinki-NLP models Apache-2.0; M2M100 fallback MIT.
           EOF
           python - <<'PY'
           import json,os,pathlib,hashlib
@@ -152,24 +183,9 @@ jobs:
           (cd translated && sha256sum --check --strict SHA256SUMS)
           (cd translated && zip -q -9 "$TITLE-1.0-Offline-Backup.zip" "$TITLE-OpenFoodFacts.dthpack" pack-index.json ATTRIBUTION.md hebrew-translation-report.json TRANSLATION_NOTICE_HE.txt SHA256SUMS)
           unzip -tq "translated/$TITLE-1.0-Offline-Backup.zip"
-      - name: Publish a normal app-discoverable Release only after QA
-        if: steps.source.outputs.available == 'true'
-        run: |
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Refusing to overwrite $TAG"
-            exit 1
-          fi
-          gh release create "$TAG" \
-            "translated/$TITLE-OpenFoodFacts.dthpack" \
-            "translated/$TITLE-1.0-Offline-Backup.zip" \
-            translated/pack-index.json translated/hebrew-translation-report.json \
-            translated/ATTRIBUTION.md translated/TRANSLATION_NOTICE_HE.txt \
-            translated/SHA256SUMS \
-            --target "$GITHUB_SHA" \
-            --title "$TITLE 1.0 · optional Hebrew market-food pack" \
-            --notes "STANDARD optional pack for Down the Hill Build 34. Country-marketed Open Food Facts products with authentic verified nutrient and serving values, Hebrew machine-translated name labels (minimum 90% Hebrew text coverage), SHA256 integrity and full ZIP. NOTE: names are machine translated and not completely human linguistically reviewed; not a comprehensive traditional-dish database. Original language remains searchable. ODbL 1.0 / Apache-2.0."
-          gh release view "$TAG" --json isPrerelease --jq '.isPrerelease' | grep -qx false
-          mkdir -p verify-download
-          gh release download "$TAG" --pattern 'pack-index.json' --pattern 'SHA256SUMS' --dir verify-download
-          cmp translated/pack-index.json verify-download/pack-index.json
-          cmp translated/SHA256SUMS verify-download/SHA256SUMS
+      - name: Upload translation QA and candidate for Build 34 verification
+        if: ${{ !cancelled() && steps.source.outputs.available == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: country-translation-qa-${{ matrix.region }}
+          path: translated/
