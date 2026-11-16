@@ -125,6 +125,13 @@ jobs:
           assert before["region"]==after["region"]==os.environ["REGION"]
           assert before["count"]==after["count"]==len(oldrows)
           assert new.execute("SELECT COUNT(*) FROM food_fts").fetchone()[0]==after["count"]
+          for key in ("schema", "packID", "source", "license", "sourceURL"):
+              assert after[key] == before[key]
+          assert after["schema"] == 1 and after["packID"] == "travel." + os.environ["REGION"].lower()
+          labels = new.execute("SELECT id,name_he FROM foods WHERE name_he GLOB '*[א-ת]*'").fetchall()
+          for food_id, label in labels:
+              term = '"' + label.replace('"', '""') + '"'
+              assert new.execute("SELECT 1 FROM food_fts WHERE food_fts MATCH ? AND id=?", (term, food_id)).fetchone(), food_id
           qa=json.loads(Path("translated/hebrew-translation-report.json").read_text())
           assert qa["region"]==os.environ["REGION"]
           assert qa["coverage"]>=.90

@@ -49,16 +49,16 @@ def translated_map(names, model, batch_size=16):
   if at%(16*50)==0:print("NAMES_PROGRESS",model,at,len(names),flush=True)
  del pipe
  return result
-GE_FALLBACK = "facebook/m2m100_418M"
-GE_FALLBACK_REVISION = "55c2e61bbf05dfb8d7abccdc3fae6fc8512fd636"
+HEBREW_FALLBACK = "facebook/m2m100_418M"
+HEBREW_FALLBACK_REVISION = "55c2e61bbf05dfb8d7abccdc3fae6fc8512fd636"
 
 
 def direct_hebrew(by_language):
  from transformers import M2M100ForConditionalGeneration, M2M100Tokenizer
  import torch
 
- model = M2M100ForConditionalGeneration.from_pretrained(GE_FALLBACK, revision=GE_FALLBACK_REVISION)
- tokenizer = M2M100Tokenizer.from_pretrained(GE_FALLBACK, revision=GE_FALLBACK_REVISION)
+ model = M2M100ForConditionalGeneration.from_pretrained(HEBREW_FALLBACK, revision=HEBREW_FALLBACK_REVISION)
+ tokenizer = M2M100Tokenizer.from_pretrained(HEBREW_FALLBACK, revision=HEBREW_FALLBACK_REVISION)
  result = {}
  with torch.inference_mode():
   for language, terms in by_language.items():
@@ -105,7 +105,7 @@ def run(args):
      language="el"
     elif CYRILLIC.search(name):
      language="uk" if UKRAINIAN.search(name) else "ru"
-    elif LANG[code] in ("es","it","fr") and (not source or source==original):
+    elif LANG[code] in ("es","it","fr") and not source:
      language=LANG[code]
     else:
      english[id]=name
@@ -119,17 +119,16 @@ def run(args):
    unique=sorted(set(english.values()))
    labels=translated_map(unique,"Helsinki-NLP/opus-mt-en-he")
    labels_by_id={id:labels.get(name,"").strip() for id,name in english.items()}
-   if code=="GE":
-    fallback={}
-    bridged_ids=set()
-    for language,terms in bridge_terms.items():
-     bridged_ids.update(terms)
-     missing={id:name for id,name in terms.items() if not valid_hebrew(labels_by_id.get(id,""))}
-     if missing:fallback[language]=missing
-    missing={id:name for id,name in english.items()
-             if id not in bridged_ids and not valid_hebrew(labels_by_id.get(id,""))}
-    if missing:fallback["en"]=missing
-    if fallback:labels_by_id.update(direct_hebrew(fallback))
+   fallback={}
+   bridged_ids=set()
+   for language,terms in bridge_terms.items():
+    bridged_ids.update(terms)
+    missing={id:name for id,name in terms.items() if not valid_hebrew(labels_by_id.get(id,""))}
+    if missing:fallback[language]=missing
+   missing={id:name for id,name in english.items()
+            if id not in bridged_ids and not valid_hebrew(labels_by_id.get(id,""))}
+   if missing:fallback["en"]=missing
+   if fallback:labels_by_id.update(direct_hebrew(fallback))
    changes=0
    for id,local,en,he,search,brand in rows:
     label=labels_by_id.get(id,"")
@@ -146,7 +145,7 @@ def run(args):
    count=db.execute("SELECT COUNT(*) FROM foods").fetchone()[0]
    fts=db.execute("SELECT COUNT(*) FROM food_fts").fetchone()[0]
    covered=db.execute("SELECT COUNT(*) FROM foods WHERE name_he GLOB '*[א-ת]*'").fetchone()[0]
-   if count!=meta["count"] or fts!=count:raise RuntimeError("FTS/record mismatch")
+   if not count or count!=meta["count"] or fts!=count:raise RuntimeError("FTS/record mismatch")
    samples=db.execute("SELECT name_de,name_en,name_he FROM foods ORDER BY id LIMIT 100").fetchall()
    original_100=db.execute("SELECT name_de,name_en,name_he FROM foods WHERE name_he IS NOT NULL AND name_he!='' ORDER BY id LIMIT 20").fetchall()
    db.execute("VACUUM");db.close();db=None
@@ -157,7 +156,7 @@ def run(args):
    qa={"region":code,"records":count,"hebrew_name_records":covered,"coverage":round(covered/count,5),
       "changed_labels":changes,"untranslated":count-covered,"source_rows_sha256_before":before,
       "source_rows_sha256_after":after,"translation_method":"Helsinki-NLP models (Apache-2.0)" +
-      ("; facebook/m2m100_418M (MIT) for missing labels" if code=="GE" and fallback else ""),
+      ("; facebook/m2m100_418M (MIT) for missing labels" if fallback else ""),
       "human_linguistic_qa_completed":False,"sample_first_100":samples,
       "sample_20_translated":original_100}
    qa["sample_untranslated"] = [row[:3] for row in rows if not valid_hebrew(str(row[3] or ""))

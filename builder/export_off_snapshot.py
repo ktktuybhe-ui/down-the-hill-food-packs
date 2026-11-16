@@ -6,7 +6,7 @@ import json
 import re
 from pathlib import Path
 
-from build_country_market_packs import COUNTRIES, NAMES, nutrients
+from build_country_market_packs import COUNTRIES, NAMES, nutrients, v
 
 DATASET = "https://huggingface.co/datasets/openfoodfacts/product-database"
 NUTRIENTS = ("energy-kcal", "energy-kj", "proteins", "carbohydrates", "fat", "sugars", "fiber")
@@ -33,9 +33,10 @@ def export_row(product, language):
     }
     # Legacy OFF's "100g" slot can also mean 100 ml. The query only
     # accepts explicit 100g baselines. Keep servings with an explicit gram unit.
-    if re.search(r"(?<![\d.,])\d+(?:[.,]\d+)?\s*g\b", serving_label or "", re.IGNORECASE):
-        if not re.search(r"\b(?:ml|cl|dl|l|kg|mg)\b", serving_label, re.IGNORECASE):
-            row["serving_quantity"] = serving
+    gram_amounts = re.findall(r"(?<![\d.,])(\d+(?:[.,]\d+)?)\s*g\b", serving_label or "", re.IGNORECASE)
+    other_units = re.search(r"\b(?:ml|cl|dl|l|kg|mg)\b", serving_label or "", re.IGNORECASE)
+    if len(gram_amounts) == 1 and not other_units and v(gram_amounts[0]) == v(serving):
+        row["serving_quantity"] = serving
     for value in values or ():
         if value["name"] in NUTRIENTS:
             row[f'{value["name"]}_100g'] = value["100g"]
