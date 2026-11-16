@@ -1,0 +1,147 @@
+name: Publish five verified country packs for on-device QA
+on:
+  workflow_run:
+    workflows: ['Translate and verify country food packs']
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  release:
+    name: Verify and publish ${{ matrix.title }} country pack
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - region: GE
+            title: Georgia
+            tag: georgia-1.0
+          - region: ES
+            title: Spain
+            tag: spain-1.0
+          - region: IT
+            title: Italy
+            tag: italy-1.0
+          - region: FR
+            title: France
+            tag: france-1.0
+          - region: GR
+            title: Greece
+            tag: greece-1.0
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TITLE: ${{ matrix.title }}
+      REGION: ${{ matrix.region }}
+      RELEASE_TAG: ${{ matrix.tag }}
+      RUN_ID: ${{ github.event.workflow_run.id }}
+    steps:
+      - name: Choose trusted successful translation workflow run from main
+        run: |
+          if [[ -z "$RUN_ID" ]]; then
+            RUN_ID="$(gh run list --repo "$GH_REPO" \
+              --workflow promote-translated-countries.yml --branch main \
+              --event workflow_run --limit 20 --json databaseId,conclusion \
+              --jq '[.[] | select(.conclusion == "success") | .databaseId][0] // empty')"
+          fi
+          if [[ -z "$RUN_ID" ]]; then
+            echo "No translated five-country workflow available on main" >&2
+            exit 1
+          fi
+          gh run view "$RUN_ID" --repo "$GH_REPO" --json conclusion \
+            --jq '.conclusion' | grep -qx success
+          echo "TRANSLATION_RUN=$RUN_ID" >> "$GITHUB_ENV"
+      - name: Fetch authenticated translation artifacts
+        run: |
+          mkdir -p candidate
+          gh run download "$TRANSLATION_RUN" --repo "$GH_REPO" \
+            --name "country-translation-qa-$REGION" --dir candidate
+          test -s "candidate/$TITLE-OpenFoodFacts.dthpack"
+          test -s candidate/pack-index.json
+          test -s candidate/SHA256SUMS
+          (cd candidate && sha256sum --check --strict SHA256SUMS)
+          unzip -tq "candidate/$TITLE-1.0-Offline-Backup.zip"
+      - name: Independently verify 90% Hebrew, nutrition, FTS, serving metadata, provenance, ZIP and release index
+        run: |
+          python - <<'PY'
+          import hashlib,json,os,sqlite3,struct,zipfile
+          from pathlib import Path
+          root=Path("candidate");region=os.environ["REGION"];title=os.environ["TITLE"]
+          qa=json.loads((root/"hebrew-translation-report.json").read_text())
+          index=json.loads((root/"pack-index.json").read_text())
+          assert qa["region"]==region and qa["records"]>0
+          assert qa["hebrew_name_records"]/qa["records"]>=.90
+          assert qa["source_rows_sha256_before"]==qa["source_rows_sha256_after"]
+          assert qa["human_linguistic_qa_completed"] is False
+          assert index["region"]==region and index["status"]=="verified"
+          assert index["release_tag"]==os.environ["RELEASE_TAG"]
+          assert len(index["files"])==1
+          f=index["files"][0]
+          assert f["packID"]=="travel."+region.lower()
+          assert f["source"]=="OpenFoodFacts" and f["license"]=="ODbL 1.0"
+          assert f["version"]=="1.0" and f["records"]==qa["records"] if "records" in f else True
+          pack=root/f["file"]
+          raw=pack.read_bytes()
+          assert pack.name==title+"-OpenFoodFacts.dthpack"
+          assert len(raw)==f["bytes"]
+          assert hashlib.sha256(raw).hexdigest()==f["sha256_file"]
+          assert raw[:7]==b"DTHPK1\n"
+          hsize=struct.unpack(">I",raw[7:11])[0]
+          assert 0<hsize<8192
+          head=json.loads(raw[11:11+hsize]);payload=raw[11+hsize:]
+          assert hashlib.sha256(payload).hexdigest()==head["sha256"]
+          assert head["packID"]==f["packID"] and head["region"]==region
+          assert head["count"]==qa["records"] and head["source"]=="OpenFoodFacts"
+          assert head["schema"]==1 and head["license"]=="ODbL 1.0"
+          db=sqlite3.connect(":memory:");db.deserialize(payload)
+          assert db.execute("PRAGMA integrity_check").fetchone()[0]=="ok"
+          assert db.execute("SELECT COUNT(*) FROM foods").fetchone()[0]==head["count"]
+          assert db.execute("SELECT COUNT(*) FROM food_fts").fetchone()[0]==head["count"]
+          assert db.execute("SELECT COUNT(*) FROM foods WHERE name_he GLOB '*[א-ת]*'").fetchone()[0]==qa["hebrew_name_records"]
+          assert db.execute("SELECT COUNT(*) FROM foods WHERE base_unit NOT IN ('g','ml')").fetchone()[0]==0
+          assert db.execute("SELECT COUNT(*) FROM foods WHERE kcal_100 IS NULL OR protein_100 IS NULL OR carbs_100 IS NULL OR fat_100 IS NULL").fetchone()[0]==0
+          assert db.execute("SELECT COUNT(*) FROM foods WHERE kcal_100 < 0 OR protein_100 < 0 OR carbs_100 < 0 OR fat_100 < 0").fetchone()[0]==0
+          assert db.execute("SELECT COUNT(*) FROM foods WHERE serving_size IS NOT NULL AND (serving_size<=0 OR serving_size>5000)").fetchone()[0]==0
+          translated=db.execute("SELECT id,name_he FROM foods WHERE name_he GLOB '*[א-ת]*' LIMIT 100").fetchall()
+          for food_id,label in translated:
+              term='"'+label.replace('"','""')+'"'
+              assert db.execute("SELECT 1 FROM food_fts WHERE food_fts MATCH ? AND id=?",(term,food_id)).fetchone(),food_id
+          db.close()
+          with zipfile.ZipFile(root/(title+"-1.0-Offline-Backup.zip")) as z:
+              assert set(z.namelist())>={pack.name,"pack-index.json","SHA256SUMS","hebrew-translation-report.json","ATTRIBUTION.md"}
+              assert hashlib.sha256(z.read(pack.name)).digest()==hashlib.sha256(raw).digest()
+          print("APP_PACK_RELEASE_QA_PASS",region,head["count"],qa["hebrew_name_records"])
+          PY
+      - name: Publish an ordinary optional food-pack Release for iPhone trial
+        run: |
+          if gh release view "$RELEASE_TAG" --repo "$GH_REPO" >/dev/null 2>&1; then
+            echo "Release tag exists; never overwrite existing packs"
+            gh release view "$RELEASE_TAG" --repo "$GH_REPO" --json isPrerelease \
+              --jq '.isPrerelease' | grep -qx false
+            exit 0
+          fi
+          gh release create "$RELEASE_TAG" \
+            "candidate/$TITLE-OpenFoodFacts.dthpack" \
+            "candidate/$TITLE-1.0-Offline-Backup.zip" \
+            candidate/pack-index.json candidate/hebrew-translation-report.json \
+            candidate/ATTRIBUTION.md candidate/TRANSLATION_NOTICE_HE.txt \
+            candidate/SHA256SUMS \
+            --repo "$GH_REPO" --target "${{ github.sha }}" \
+            --title "$TITLE 1.0 · optional food pack for iPhone QA" \
+            --notes "Authentic Open Food Facts country-marketed products; original kcal, macros and serving-size values preserved. At least 90% of products have a machine-generated Hebrew name. Source names remain searchable. SHA256/SQLite/FTS/data-provenance checks and iOS import harness verified. ON-DEVICE QA AND HUMAN LANGUAGE REVIEW ARE NOT YET COMPLETE. This is a TEST-READY optional pack, not a complete list of traditional local foods. Dataset ODbL 1.0; model licenses listed in attached notice. Save an app backup before installing."
+          gh release view "$RELEASE_TAG" --repo "$GH_REPO" --json isPrerelease \
+            --jq '.isPrerelease' | grep -qx false
+          mkdir -p release-check
+          gh release download "$RELEASE_TAG" --repo "$GH_REPO" \
+            --pattern SHA256SUMS --pattern pack-index.json --dir release-check
+          cmp candidate/SHA256SUMS release-check/SHA256SUMS
+          cmp candidate/pack-index.json release-check/pack-index.json
