@@ -88,7 +88,9 @@ jobs:
           f=index["files"][0]
           assert f["packID"]=="travel."+region.lower()
           assert f["source"]=="OpenFoodFacts" and f["license"]=="ODbL 1.0"
-          assert f["version"]=="1.0" and f["records"]==qa["records"] if "records" in f else True
+          assert f["version"]=="1.0"
+          if "records" in f:
+              assert f["records"]==qa["records"]
           pack=root/f["file"]
           raw=pack.read_bytes()
           assert pack.name==title+"-OpenFoodFacts.dthpack"
