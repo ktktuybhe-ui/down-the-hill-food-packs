@@ -1,3 +1,20 @@
+# Country food packs — current development status (16 Nov 2026)
+
+This section supersedes the dated 15 Nov notes below. Check live GitHub Actions before assuming completion.
+
+- App source: Down the Hill Build 34 (v0.6.6) prepared for Xcode installation; actual phone installation and user data remain separate. Its FoodPackRegistry supports travel.XX and optional removable International Core. Universal portion engine supplies source servings or explicit editable estimates; original per-100g/ml data must remain immutable.
+- Austria 1.4 and International Core 1.0 are the existing ordinary published Releases, with immutable independent ZIP backups, manifest and SHA256.
+- Georgia source scan: 2,430 country-tagged CSV products; 574 with complete valid protein/carbs/fat/energy, 28 source serving sizes, 34 native ml-based nutrition items, 5 Hebrew names in SOURCE candidate. Verified SQLite/FTS/pack SHA256. Source candidate `country-georgia-source-qa-3` is a PRERELEASE and **NOT app-installable**.
+- Georgian traditional cuisine is NOT covered comprehensively: the 2009 Georgian composition tables have unresolved redistribution rights. Do not fabricate nutrient values or copy unlicensed entries.
+- Source CSV exports for Spain (ES), Italy (IT), France (FR), Greece (GR) are also set up using official OFF country-specific downloadable search CSV, rather than querying rate-limited API pages. Jobs: https://github.com/ktktuybhe-ui/down-the-hill-food-packs/actions/runs/43811724359
+- Translation workflow: https://github.com/ktktuybhe-ui/down-the-hill-food-packs/actions/runs/43812190358 . Applies Helsinki Marian multilingual model labels only, compares SHA256 hashes of all protected source ID, nutrient, original name, and serving fields. Ordinary Releases are published only if Hebrew coverage and data QA gates pass. Machine translation is NOT human linguistic review.
+- Prior Georgia 64-food archive `georgia-he-candidate-2` is clearly labeled INVALID partial and must never be promoted.
+- Required permanent serving unit standard: `PACK_SERVING_STANDARD_HE.md`, valid source serving and editable natural units, never fabricated nutrition or silent g/ml substitution.
+- An hourly condition-watch notification is enabled; notify with exact approved Release URL only when a NEW normal verified country pack has actually been published, not for candidates. GitHub completion ≠ installed on iPhone.
+- No country is considered approved solely because a CSV file downloaded; check production Release metadata and QA evidence.
+
+---
+
 # Down the Hill · Food Pack Status and Recovery (15 Nov 2026)
 
 This file is the persistent source-of-truth index for country and international food packs.
