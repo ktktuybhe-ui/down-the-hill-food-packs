@@ -65,9 +65,15 @@ jobs:
             printf '%s\n' "$URL" > source/SOURCE-URL.txt
           else
             rm -f source/country.csv
-            python -m pip install 'duckdb==1.4.4'
+            python -m pip install 'duckdb==1.4.4' 'huggingface-hub>=0.34,<1'
             revision=f2c887f344701a3d6ad7b0d3fa9626a842088789
-            python builder/export_off_snapshot.py --revision "$revision" --country "$COUNTRY" --output source/country.csv
+            HF_XET_HIGH_PERFORMANCE=1 hf download openfoodfacts/product-database food.parquet \
+              --repo-type dataset --revision "$revision" --local-dir source/snapshot
+            printf '%s  %s\n' \
+              '68c8bf1ef6270745f7772ad95b11516196a9083d6b89f991e83489c2c7535c6a' \
+              source/snapshot/food.parquet | sha256sum --check --strict
+            python builder/export_off_snapshot.py --snapshot source/snapshot/food.parquet \
+              --country "$COUNTRY" --output source/country.csv
             printf '%s\n' "https://huggingface.co/datasets/openfoodfacts/product-database/resolve/$revision/food.parquet" > source/SOURCE-URL.txt
           fi
           test "$(stat -c%s source/country.csv)" -gt 1000

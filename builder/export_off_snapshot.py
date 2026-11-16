@@ -8,7 +8,6 @@ from pathlib import Path
 
 from build_country_market_packs import COUNTRIES, NAMES, nutrients, v
 
-DATASET = "https://huggingface.co/datasets/openfoodfacts/product-database"
 NUTRIENTS = ("energy-kcal", "energy-kj", "proteins", "carbohydrates", "fat", "sugars", "fiber")
 COLUMNS = (
     "code", "countries_tags", "product_name", "product_name_en", "brands",
@@ -63,7 +62,7 @@ def export(source, country, output):
                   AND obsolete IS DISTINCT FROM TRUE
                   AND no_nutrition_data IS DISTINCT FROM TRUE
                 """,
-                [source, tag],
+                [str(source), tag],
             )
             with partial.open("w", encoding="utf-8", newline="") as file:
                 columns = (*COLUMNS, f"product_name_{language}")
@@ -80,15 +79,13 @@ def export(source, country, output):
         partial.replace(output)
     finally:
         partial.unlink(missing_ok=True)
-    print(json.dumps({"source": source, "country": country, "eligible_rows": count}))
+    print(json.dumps({"source": str(source), "country": country, "eligible_rows": count}))
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--revision", required=True)
+    parser.add_argument("--snapshot", type=Path, required=True)
     parser.add_argument("--country", choices=sorted(COUNTRIES), required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    if not re.fullmatch("[0-9a-f]{40}", args.revision):
-        parser.error("expected an immutable Open Food Facts snapshot revision")
-    export(f"{DATASET}/resolve/{args.revision}/food.parquet", args.country, args.output)
+    export(args.snapshot, args.country, args.output)
