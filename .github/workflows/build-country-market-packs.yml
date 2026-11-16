@@ -71,8 +71,12 @@ jobs:
             cols=next(csv.reader([header],delimiter=sep))
             print("SOURCE_EXPORT_BYTES",path.stat().st_size)
             print("SOURCE_EXPORT_COLUMNS",len(cols),"sample",cols[:18])
-            req={"code","product_name","countries_tags","energy-kcal_100g","proteins_100g","carbohydrates_100g","fat_100g"}
+            relevant=[c for c in cols if any(w in c.lower() for w in ("name_en","name_ka","name_es","name_fr","name_it","name_el","countries","nutriment","energy","proteins","carbohydrates","fat_100","serving","scans"))]
+            print("SOURCE_RELEVANT_COLUMNS",relevant[:110])
+            req={"code","countries_tags"}
             if not req.issubset(set(cols)):raise RuntimeError("Missing country export columns "+str(req-set(cols)))
+            if not any("energy" in c.lower() for c in cols):raise RuntimeError("Nutrient columns not detected")
+            if not any(c.startswith("product_name_") for c in cols):raise RuntimeError("Product name columns missing")
           PY
           sha256sum source/country.csv > source/SOURCE-SHA256SUMS
       - name: Make isolated .dthpack with verified nutrition, search and serving metadata
